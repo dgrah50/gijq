@@ -1,0 +1,10 @@
+{
+  "users": [
+    {"name": "alice", "age": 30, "active": true},
+    {"name": "bob", "age": 25, "active": false}
+  ],
+  "meta": {
+    "version": "1.0",
+    "count": 2
+  }
+}
