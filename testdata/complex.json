@@ -1,0 +1,57 @@
+{
+  "company": "Acme Corp",
+  "founded": 2015,
+  "active": true,
+  "headquarters": {
+    "city": "San Francisco",
+    "state": "CA",
+    "coordinates": {
+      "lat": 37.7749,
+      "lng": -122.4194
+    }
+  },
+  "departments": [
+    {
+      "name": "Engineering",
+      "budget": 2500000,
+      "head": "Alice Chen",
+      "employees": [
+        {"id": 1, "name": "Bob Smith", "role": "Backend", "level": 3, "remote": true},
+        {"id": 2, "name": "Carol Jones", "role": "Frontend", "level": 2, "remote": false},
+        {"id": 3, "name": "Dave Wilson", "role": "DevOps", "level": 4, "remote": true},
+        {"id": 4, "name": "Eve Brown", "role": "Backend", "level": 2, "remote": false},
+        {"id": 5, "name": "Frank Lee", "role": "Frontend", "level": 3, "remote": true}
+      ]
+    },
+    {
+      "name": "Design",
+      "budget": 800000,
+      "head": "Grace Kim",
+      "employees": [
+        {"id": 6, "name": "Hank Davis", "role": "UX", "level": 3, "remote": false},
+        {"id": 7, "name": "Iris Park", "role": "Visual", "level": 2, "remote": true}
+      ]
+    },
+    {
+      "name": "Sales",
+      "budget": 1200000,
+      "head": "Jack Miller",
+      "employees": [
+        {"id": 8, "name": "Kate Adams", "role": "Enterprise", "level": 3, "remote": false},
+        {"id": 9, "name": "Leo Garcia", "role": "SMB", "level": 2, "remote": true},
+        {"id": 10, "name": "Mia Taylor", "role": "Enterprise", "level": 4, "remote": false}
+      ]
+    }
+  ],
+  "metadata": {
+    "version": "2.1",
+    "lastUpdated": "2025-12-15T10:30:00Z",
+    "tags": ["technology", "startup", "series-b"],
+    "metrics": {
+      "revenue": 15000000,
+      "growth": 0.42,
+      "customers": 340,
+      "nps": null
+    }
+  }
+}

@@ -2,6 +2,8 @@
 
 Interactive jq explorer for the terminal. Type a filter, see results instantly.
 
+![demo](demo.gif)
+
 ```
 gijq data.json
 ```
