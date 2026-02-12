@@ -42,15 +42,17 @@ go build -o gijq .
 ## Releases
 
 This repo includes a GitHub Actions release workflow at `.github/workflows/release.yml`.
-It runs `go test ./...`, builds binaries for Linux/macOS/Windows, and uploads them to a GitHub Release on each push to `main`.
+It runs `go test ./...`, builds binaries for Linux/macOS/Windows, and uploads them to a GitHub Release when you push a semver tag (`vX.Y.Z`).
 
-Release tags are generated automatically in this format:
+Create and push the next release tag with:
 
-```text
-main-<run-number>-<short-sha>
+```sh
+scripts/release.sh          # defaults to patch bump
+scripts/release.sh minor    # bump minor
+scripts/release.sh major    # bump major
 ```
 
-After pushing to `main`, check the Actions tab, then see the assets on the new release page.
+After pushing the tag, check the Actions tab, then see assets on the release page.
 
 ## Usage
 

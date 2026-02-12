@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -36,14 +36,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Prepare release metadata
-        id: meta
-        run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          TAG="main-${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
-
       - name: Run tests
         run: go test ./...
 
@@ -53,7 +45,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          VERSION="${{ steps.meta.outputs.version }}"
+          VERSION="${GITHUB_REF_NAME}"
           BIN_NAME="gijq_${VERSION}_${GOOS}_${GOARCH}"
 
           if [ "$GOOS" = "windows" ]; then
@@ -73,11 +65,9 @@ jobs:
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: Release ${{ steps.meta.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
           generate_release_notes: true
-          prerelease: true
           files: |
             *.tar.gz
             *.tar.gz.sha256
