@@ -39,6 +39,19 @@ cd gijq
 go build -o gijq .
 ```
 
+## Releases
+
+This repo includes a GitHub Actions release workflow at `.github/workflows/release.yml`.
+It runs `go test ./...`, builds binaries for Linux/macOS/Windows, and uploads them to a GitHub Release on each push to `main`.
+
+Release tags are generated automatically in this format:
+
+```text
+main-<run-number>-<short-sha>
+```
+
+After pushing to `main`, check the Actions tab, then see the assets on the new release page.
+
 ## Usage
 
 ```sh

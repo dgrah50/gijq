@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and release (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Prepare release metadata
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          TAG="main-${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          BIN_NAME="gijq_${VERSION}_${GOOS}_${GOARCH}"
+
+          if [ "$GOOS" = "windows" ]; then
+            BIN_NAME="${BIN_NAME}.exe"
+          fi
+
+          go build -trimpath -o "$BIN_NAME" .
+
+          if [ "$GOOS" = "windows" ]; then
+            zip "${BIN_NAME}.zip" "$BIN_NAME"
+            sha256sum "${BIN_NAME}.zip" > "${BIN_NAME}.zip.sha256"
+          else
+            tar -czf "${BIN_NAME}.tar.gz" "$BIN_NAME"
+            sha256sum "${BIN_NAME}.tar.gz" > "${BIN_NAME}.tar.gz.sha256"
+          fi
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Release ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          prerelease: true
+          files: |
+            *.tar.gz
+            *.tar.gz.sha256
+            *.zip
+            *.zip.sha256
