@@ -46,7 +46,7 @@ func (m Model) renderView() string {
 
 func (m Model) renderHeader() string {
 	title := titleStyle.Render("gijq")
-	help := helpStyle.Render("tab: autocomplete | ctrl+h: history | ctrl+y: copy output | ctrl+f: copy filter | enter: quit")
+	help := helpStyle.Render("tab: autocomplete | alt/ctrl+left/right: word jump | ctrl+h: history | ctrl+y: copy output | ctrl+f: copy filter | enter: quit")
 
 	var status string
 	if m.status != "" {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -145,6 +146,28 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.output.HalfViewDown()
 		return m, nil
 
+	case "alt+left", "alt+b", "ctrl+left":
+		m.moveCursorToPrevWord()
+		return m, nil
+
+	case "alt+right", "alt+f", "ctrl+right":
+		m.moveCursorToNextWord()
+		return m, nil
+
+	case "alt+backspace", "ctrl+backspace", "ctrl+w":
+		if m.deletePrevWord() {
+			_, m.acContext = m.autocomplete.Suggest(m.filter.Value())
+			return m, m.executeFilter()
+		}
+		return m, nil
+
+	case "alt+delete", "alt+d", "ctrl+delete":
+		if m.deleteNextWord() {
+			_, m.acContext = m.autocomplete.Suggest(m.filter.Value())
+			return m, m.executeFilter()
+		}
+		return m, nil
+
 	default:
 		// Text input
 		var cmd tea.Cmd
@@ -237,6 +260,116 @@ func (m Model) copyOutput() (tea.Model, tea.Cmd) {
 		m.status = "Copied output to clipboard"
 	}
 	return m, clearStatusAfter(3 * time.Second)
+}
+
+func (m *Model) moveCursorToPrevWord() {
+	pos := m.filter.Position()
+	nextPos := prevWordStart(m.filter.Value(), pos)
+	m.filter.SetCursor(nextPos)
+}
+
+func (m *Model) moveCursorToNextWord() {
+	pos := m.filter.Position()
+	nextPos := nextWordStart(m.filter.Value(), pos)
+	m.filter.SetCursor(nextPos)
+}
+
+func (m *Model) deletePrevWord() bool {
+	value := m.filter.Value()
+	pos := m.filter.Position()
+	start := prevWordStart(value, pos)
+	if start == pos {
+		return false
+	}
+
+	r := []rune(value)
+	newValue := string(append(r[:start], r[pos:]...))
+	m.filter.SetValue(newValue)
+	m.filter.SetCursor(start)
+	return true
+}
+
+func (m *Model) deleteNextWord() bool {
+	value := m.filter.Value()
+	pos := m.filter.Position()
+	end := nextWordDeleteEnd(value, pos)
+	if end == pos {
+		return false
+	}
+
+	r := []rune(value)
+	newValue := string(append(r[:pos], r[end:]...))
+	m.filter.SetValue(newValue)
+	m.filter.SetCursor(pos)
+	return true
+}
+
+func prevWordStart(value string, pos int) int {
+	r := []rune(value)
+	if pos <= 0 {
+		return 0
+	}
+	if pos > len(r) {
+		pos = len(r)
+	}
+
+	i := pos
+	for i > 0 && !isWordRune(r[i-1]) {
+		i--
+	}
+	for i > 0 && isWordRune(r[i-1]) {
+		i--
+	}
+	return i
+}
+
+func nextWordStart(value string, pos int) int {
+	r := []rune(value)
+	if pos < 0 {
+		return 0
+	}
+	if pos >= len(r) {
+		return len(r)
+	}
+
+	i := pos
+	for i < len(r) && isWordRune(r[i]) {
+		i++
+	}
+	for i < len(r) && !isWordRune(r[i]) {
+		i++
+	}
+	return i
+}
+
+func nextWordDeleteEnd(value string, pos int) int {
+	r := []rune(value)
+	if pos < 0 {
+		return 0
+	}
+	if pos >= len(r) {
+		return len(r)
+	}
+
+	i := pos
+	if isWordRune(r[i]) {
+		for i < len(r) && isWordRune(r[i]) {
+			i++
+		}
+		return i
+	}
+
+	for i < len(r) && !isWordRune(r[i]) {
+		i++
+	}
+	for i < len(r) && isWordRune(r[i]) {
+		i++
+	}
+	return i
+}
+
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
 func (m Model) copyFilter() (tea.Model, tea.Cmd) {
