@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -23,6 +25,11 @@ func main() {
 }
 
 func run() error {
+	if wantsHelp(os.Args[1:]) {
+		printHelp(os.Stdout)
+		return nil
+	}
+
 	// Determine input source
 	jsonData, filename, filepath, err := loadInput()
 	if err != nil {
@@ -70,7 +77,7 @@ func loadInput() ([]byte, string, string, error) {
 
 	// Read from file argument
 	if len(os.Args) < 2 {
-		return nil, "", "", fmt.Errorf("usage: gijq <file.json>\n       cat file.json | gijq")
+		return nil, "", "", errors.New(usageText())
 	}
 
 	path := os.Args[1]
@@ -85,6 +92,30 @@ func loadInput() ([]byte, string, string, error) {
 	}
 
 	return data, filepath.Base(path), absPath, nil
+}
+
+func wantsHelp(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+func printHelp(w io.Writer) {
+	_, _ = io.WriteString(w, usageText()+"\n")
+}
+
+func usageText() string {
+	lines := []string{
+		"usage: gijq <file.json>",
+		"       cat file.json | gijq",
+		"",
+		"options:",
+		"  -h, --help   show help",
+	}
+	return strings.Join(lines, "\n")
 }
 
 func getHistoryPath() string {

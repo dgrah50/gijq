@@ -31,6 +31,35 @@ Requires Go 1.24+.
 go install github.com/dayangraham/gijq@latest
 ```
 
+Or install a prebuilt binary from GitHub Releases.
+
+### From GitHub Releases (macOS/Linux)
+
+Install latest:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dgrah50/gijq/main/scripts/install.sh | sh
+```
+
+Install a specific version:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dgrah50/gijq/main/scripts/install.sh | sh -s -- v0.0.1
+```
+
+### From GitHub Releases (Windows PowerShell)
+
+```powershell
+$repo = "dgrah50/gijq"
+$latest = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest"
+$tag = $latest.tag_name
+$asset = "gijq_${tag}_windows_amd64.exe.zip"
+$url = "https://github.com/$repo/releases/download/$tag/$asset"
+Invoke-WebRequest -Uri $url -OutFile $asset
+Expand-Archive $asset -DestinationPath .
+Move-Item "gijq_${tag}_windows_amd64.exe" "gijq.exe"
+```
+
 Or build from source:
 
 ```
