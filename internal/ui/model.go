@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/dayangraham/gijq/internal/autocomplete"
 	"github.com/dayangraham/gijq/internal/clipboard"
@@ -38,6 +39,9 @@ type Model struct {
 	output viewport.Model
 	result jq.Result
 	lines  []string
+	// Output geometry state
+	outputXOffset int
+	maxLineWidth  int
 
 	// Autocomplete state
 	suggestions   []string
@@ -109,6 +113,7 @@ func NewModel(
 		querySeq:     1,
 		colorCache:   newLineColorCache(4096),
 		lines:        []string{""},
+		maxLineWidth: 0,
 		telemetry:    newLatencyTelemetry(cfg.Telemetry),
 	}
 }
@@ -189,6 +194,17 @@ func (m *Model) startExecute(seq int) tea.Cmd {
 		result := m.jq.ExecuteWithContext(ctx, filter)
 		return resultMsg{seq: seq, result: result}
 	}
+}
+
+func maxDisplayLineWidth(lines []string) int {
+	maxWidth := 0
+	for _, line := range lines {
+		w := runewidth.StringWidth(line)
+		if w > maxWidth {
+			maxWidth = w
+		}
+	}
+	return maxWidth
 }
 
 // TelemetrySummary returns a printable latency summary when telemetry is enabled.

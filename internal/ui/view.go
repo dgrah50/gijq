@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 )
 
 // Raw ANSI color codes for JSON syntax highlighting
@@ -46,7 +47,7 @@ func (m Model) renderView() string {
 
 func (m Model) renderHeader() string {
 	title := titleStyle.Render("gijq")
-	help := helpStyle.Render("tab: autocomplete | alt/ctrl+left/right: word jump | ctrl+h: history | ctrl+y: copy output | ctrl+f: copy filter | enter: quit")
+	help := helpStyle.Render("tab: autocomplete | shift+left/right: h-scroll | alt/ctrl+left/right: word jump | ctrl+h: history | ctrl+y: copy output | ctrl+f: copy filter | enter: quit")
 
 	var status string
 	if m.status != "" {
@@ -61,7 +62,7 @@ func (m Model) renderHeader() string {
 }
 
 func (m Model) renderContent() string {
-	outputWidth := m.width - m.suggestWidth() - 5
+	outputWidth := m.outputContentWidth()
 
 	lines := m.lines
 	if len(lines) == 0 {
@@ -82,11 +83,14 @@ func (m Model) renderContent() string {
 	// Manually pad each line to width (preserves ANSI codes)
 	var paddedLines []string
 	for _, rawLine := range visibleLines {
+		clippedRaw, leftCut, rightCut := clipRawLine(rawLine, m.outputXOffset, outputWidth)
+		clippedRaw = withEllipsis(clippedRaw, outputWidth, leftCut, rightCut)
+
 		line := rawLine
 		if m.result.Error != nil {
-			line = errorStyle.Render(rawLine)
+			line = errorStyle.Render(clippedRaw)
 		} else {
-			line = m.colorCache.Colorize(rawLine)
+			line = m.colorCache.Colorize(clippedRaw)
 		}
 
 		displayWidth := lipgloss.Width(line)
@@ -105,10 +109,13 @@ func (m Model) renderContent() string {
 	visibleContent := strings.Join(paddedLines, "\n")
 
 	// Only use borderStyle for border chrome, not Width/Height constraints
-	outputPane := borderStyle.Render(visibleContent)
+	outputPane := borderStyle.Width(outputWidth).Height(m.contentHeight()).Render(visibleContent)
+
+	if !m.showSuggestionPane() {
+		return outputPane
+	}
 
 	suggestPane := m.renderSuggestions()
-
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		outputPane,
 		" ",
@@ -227,8 +234,12 @@ func (m Model) renderFooter() string {
 	filter := m.filter.View()
 	fileLabel := labelStyle.Render("file: ")
 	file := m.filename
+	scrollLabel := ""
+	if m.maxHorizontalOffset() > 0 {
+		scrollLabel = labelStyle.Render(fmt.Sprintf(" x:%d/%d", m.outputXOffset, m.maxHorizontalOffset()))
+	}
 
-	return fmt.Sprintf("\n%s%s\n%s%s", filterLabel, filter, fileLabel, file)
+	return fmt.Sprintf("\n%s%s\n%s%s%s", filterLabel, filter, fileLabel, file, scrollLabel)
 }
 
 func (m Model) overlayHistory(base string) string {
@@ -298,4 +309,117 @@ func placeOverlay(base, overlay string, width, height int) string {
 	}
 
 	return strings.Join(baseLines, "\n")
+}
+
+func clipRawLine(line string, xOffset, maxWidth int) (string, bool, bool) {
+	if maxWidth <= 0 {
+		return "", xOffset > 0, len(line) > 0
+	}
+
+	runes := []rune(line)
+	if len(runes) == 0 {
+		return "", xOffset > 0, false
+	}
+
+	if xOffset < 0 {
+		xOffset = 0
+	}
+
+	totalWidth := 0
+	for _, r := range runes {
+		w := runewidth.RuneWidth(r)
+		if w < 1 {
+			w = 1
+		}
+		totalWidth += w
+	}
+
+	if xOffset > totalWidth {
+		xOffset = totalWidth
+	}
+
+	startIdx := len(runes)
+	widthSoFar := 0
+	for i, r := range runes {
+		w := runewidth.RuneWidth(r)
+		if w < 1 {
+			w = 1
+		}
+		if widthSoFar+w > xOffset {
+			startIdx = i
+			break
+		}
+		widthSoFar += w
+	}
+
+	endIdx := startIdx
+	visibleWidth := 0
+	for i := startIdx; i < len(runes); i++ {
+		w := runewidth.RuneWidth(runes[i])
+		if w < 1 {
+			w = 1
+		}
+		if visibleWidth+w > maxWidth {
+			break
+		}
+		visibleWidth += w
+		endIdx = i + 1
+	}
+
+	leftCut := xOffset > 0
+	rightCut := (xOffset + visibleWidth) < totalWidth
+	return string(runes[startIdx:endIdx]), leftCut, rightCut
+}
+
+func withEllipsis(line string, maxWidth int, leftCut, rightCut bool) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+
+	if !leftCut && !rightCut {
+		return line
+	}
+
+	runes := []rune(line)
+	runes = trimToDisplayWidth(runes, maxWidth)
+
+	if leftCut && rightCut && maxWidth >= 2 {
+		runes = trimToDisplayWidth(runes, maxWidth-2)
+		return "…" + string(runes) + "…"
+	}
+
+	if leftCut {
+		if maxWidth == 1 {
+			return "…"
+		}
+		runes = trimToDisplayWidth(runes, maxWidth-1)
+		return "…" + string(runes)
+	}
+
+	// rightCut only
+	if maxWidth == 1 {
+		return "…"
+	}
+	runes = trimToDisplayWidth(runes, maxWidth-1)
+	return string(runes) + "…"
+}
+
+func trimToDisplayWidth(runes []rune, maxWidth int) []rune {
+	if maxWidth <= 0 || len(runes) == 0 {
+		return []rune{}
+	}
+	width := 0
+	end := 0
+	for i, r := range runes {
+		w := runewidth.RuneWidth(r)
+		if w < 1 {
+			w = 1
+		}
+		if width+w > maxWidth {
+			break
+		}
+		width += w
+		end = i + 1
+	}
+	return runes[:end]
 }

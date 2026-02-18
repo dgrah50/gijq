@@ -111,6 +111,7 @@ Once inside, type any jq expression in the filter bar:
 | `Ctrl+H` | Show query history overlay |
 | `Up/Down` | Scroll output or navigate suggestions |
 | `PgUp/PgDn` | Scroll output half-page |
+| `Shift+Left/Right` | Horizontal scroll output |
 | `Esc` | Close overlay, or exit |
 | `Ctrl+C` | Exit |
 

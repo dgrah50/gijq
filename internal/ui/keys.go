@@ -26,9 +26,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.output = newViewport(m.width, m.contentHeight())
 			m.ready = true
 		} else {
-			m.output.Width = m.width - m.suggestWidth() - 5
+			m.output.Width = m.outputContentWidth()
 			m.output.Height = m.contentHeight()
 		}
+		m.clampOutputXOffset()
 		return m, nil
 
 	case resultMsg:
@@ -47,6 +48,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.lines = strings.Split(msg.result.Raw, "\n")
 		}
+		m.maxLineWidth = maxDisplayLineWidth(m.lines)
+		m.clampOutputXOffset()
 		if m.ready {
 			// Set raw content for viewport scrolling calculation
 			if msg.result.Error != nil {
@@ -174,6 +177,22 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "down":
 		m.output.LineDown(1)
+		return m, nil
+
+	case "shift+left":
+		m.scrollHorizontal(-8)
+		return m, nil
+
+	case "shift+right":
+		m.scrollHorizontal(8)
+		return m, nil
+
+	case "home":
+		m.outputXOffset = 0
+		return m, nil
+
+	case "end":
+		m.outputXOffset = m.maxHorizontalOffset()
 		return m, nil
 
 	case "pgup":
@@ -447,11 +466,69 @@ func (m Model) contentHeight() int {
 }
 
 func (m Model) suggestWidth() int {
-	return 25
+	const minSuggestWidth = 24
+	const maxSuggestWidth = 32
+	if m.width <= 0 {
+		return minSuggestWidth
+	}
+	w := m.width / 4
+	if w < minSuggestWidth {
+		w = minSuggestWidth
+	}
+	if w > maxSuggestWidth {
+		w = maxSuggestWidth
+	}
+	return w
 }
 
 func newViewport(width, height int) viewport.Model {
 	vp := viewport.New(width-30, height) // Account for suggestion panel + borders
 	vp.SetContent("")
 	return vp
+}
+
+func (m *Model) scrollHorizontal(delta int) {
+	m.outputXOffset += delta
+	m.clampOutputXOffset()
+}
+
+func (m *Model) clampOutputXOffset() {
+	if m.outputXOffset < 0 {
+		m.outputXOffset = 0
+		return
+	}
+	maxOffset := m.maxHorizontalOffset()
+	if m.outputXOffset > maxOffset {
+		m.outputXOffset = maxOffset
+	}
+}
+
+func (m Model) maxHorizontalOffset() int {
+	outputWidth := m.outputContentWidth()
+	if outputWidth <= 0 {
+		return 0
+	}
+	maxOffset := m.maxLineWidth - outputWidth
+	if maxOffset < 0 {
+		return 0
+	}
+	return maxOffset
+}
+
+func (m Model) showSuggestionPane() bool {
+	// Keep the right pane from compressing the output pane below a usable width.
+	const minOutputWidth = 40
+	return m.width >= minOutputWidth+m.suggestWidth()+5
+}
+
+func (m Model) outputContentWidth() int {
+	gutter := 5
+	width := m.width - gutter
+	if m.showSuggestionPane() {
+		width -= m.suggestWidth()
+	}
+	if width < 10 {
+		width = 10
+	}
+	return width
 }
