@@ -67,7 +67,7 @@ jobs:
         with:
           name: release-${{ matrix.goos }}-${{ matrix.goarch }}
           if-no-files-found: error
-          files: |
+          path: |
             *.tar.gz
             *.tar.gz.sha256
             *.zip
