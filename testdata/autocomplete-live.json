@@ -1,0 +1,102 @@
+{
+  "meta": {
+    "environment": "staging",
+    "generatedAt": "2026-02-18T10:45:00Z",
+    "schemaVersion": "1.2.0"
+  },
+  "users": [
+    {
+      "id": 1001,
+      "username": "ada",
+      "userRole": "admin",
+      "profile": {
+        "name": "Ada Lovelace",
+        "nameDisplay": "Ada L.",
+        "nameNormalized": "ada lovelace",
+        "nickname": "countess"
+      },
+      "preferences": {
+        "theme": "dark",
+        "timezone": "America/New_York",
+        "notificationsEnabled": true,
+        "veryLongPreferenceKeyNameThatShouldStillNotBreakLayoutInTheOutputPane": "enabled"
+      }
+    },
+    {
+      "id": 1002,
+      "username": "grace",
+      "userRole": "editor",
+      "profile": {
+        "name": "Grace Hopper",
+        "nameDisplay": "Grace H.",
+        "nameNormalized": "grace hopper",
+        "nickname": "compiler queen"
+      },
+      "preferences": {
+        "theme": "light",
+        "timezone": "America/Los_Angeles",
+        "notificationsEnabled": false,
+        "veryLongPreferenceKeyNameThatShouldStillNotBreakLayoutInTheOutputPane": "disabled"
+      }
+    }
+  ],
+  "userSettings": {
+    "theme": "system",
+    "timezone": "UTC",
+    "twoFactorEnabled": true,
+    "trustedDeviceCount": 3
+  },
+  "userStats": {
+    "activeCount": 2,
+    "archivedCount": 1,
+    "activityByDay": [
+      {
+        "day": "Mon",
+        "count": 14
+      },
+      {
+        "day": "Tue",
+        "count": 19
+      }
+    ]
+  },
+  "userStatusSummary": {
+    "online": 1,
+    "offline": 1,
+    "idle": 0
+  },
+  "userSegmentMap": {
+    "enterprise": 12,
+    "startup": 41,
+    "education": 7
+  },
+  "usernameDirectory": {
+    "ada": 1001,
+    "grace": 1002,
+    "linus": 1003
+  },
+  "usageMetrics": {
+    "requestsPerMinute": 420,
+    "avgLatencyMs": 83,
+    "errorRatePct": 0.07
+  },
+  "utility": {
+    "uuid": "5244cf8a-ec8f-4a4c-9fa0-7f329fdd6d22",
+    "url": "https://example.internal/service/api/v2/resources",
+    "userAgent": "gijq-test-suite/0.0.1"
+  },
+  "items": [
+    {
+      "itemId": "it-001",
+      "itemName": "Primary Widget",
+      "itemNameNormalized": "primary widget",
+      "itemNameLongLabelWithRidiculousLengthToStressHorizontalScrollingInTheOutputPane": "Primary Widget (North America / Long Term Support)"
+    },
+    {
+      "itemId": "it-002",
+      "itemName": "Secondary Widget",
+      "itemNameNormalized": "secondary widget",
+      "itemNameLongLabelWithRidiculousLengthToStressHorizontalScrollingInTheOutputPane": "Secondary Widget (Europe / Standard Support)"
+    }
+  ]
+}

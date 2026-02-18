@@ -207,16 +207,24 @@ func (m Model) renderSuggestions() string {
 	}
 
 	// Show current path keys when not in autocomplete
-	keys := m.availableKeys
-	if m.keysInFlight == m.currentPath() && len(keys) == 0 {
+	allKeys := m.availableKeys
+	if m.keysInFlight == m.currentPath() && len(allKeys) == 0 {
 		return labelStyle.Render("Loading keys...")
 	}
+	keys := filterKeysByPrefix(allKeys, m.acContext.Incomplete)
 	if len(keys) == 0 {
+		if m.acContext.Incomplete != "" {
+			return labelStyle.Render("No matches")
+		}
 		return labelStyle.Render("No keys")
 	}
 
 	var lines []string
-	lines = append(lines, labelStyle.Render("Available keys:"))
+	if m.acContext.Incomplete != "" {
+		lines = append(lines, labelStyle.Render("Matching keys:"))
+	} else {
+		lines = append(lines, labelStyle.Render("Available keys:"))
+	}
 	for i, k := range keys {
 		lines = append(lines, suggestionStyle.Render("  "+k))
 		if i >= m.contentHeight()-2 {
@@ -225,6 +233,21 @@ func (m Model) renderSuggestions() string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func filterKeysByPrefix(keys []string, incomplete string) []string {
+	if incomplete == "" || len(keys) == 0 {
+		return keys
+	}
+
+	prefix := strings.ToLower(incomplete)
+	matches := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if strings.HasPrefix(strings.ToLower(key), prefix) {
+			matches = append(matches, key)
+		}
+	}
+	return matches
 }
 
 func (m Model) currentPath() string {
