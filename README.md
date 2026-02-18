@@ -105,11 +105,13 @@ Once inside, type any jq expression in the filter bar:
 |---|---|
 | *type* | Filter updates, results refresh live |
 | `Tab` | Cycle autocomplete suggestions |
+| `?` | Toggle shortcut help overlay |
 | `Enter` | Output current result to stdout and exit |
 | `Ctrl+Y` | Copy JSON output to clipboard |
 | `Ctrl+F` | Copy filter to clipboard |
 | `Ctrl+H` | Show query history overlay |
 | `Up/Down` | Scroll output or navigate suggestions |
+| `Shift+Up/Down` | Fast vertical scroll |
 | `PgUp/PgDn` | Scroll output half-page |
 | `Shift+Left/Right` | Horizontal scroll output |
 | `Esc` | Close overlay, or exit |

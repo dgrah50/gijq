@@ -98,6 +98,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 
+	case "?", "ctrl+/":
+		if m.mode == ModeHelp {
+			m.mode = ModeNormal
+		} else {
+			m.mode = ModeHelp
+		}
+		return m, nil
+
 	case "esc":
 		if m.mode != ModeNormal {
 			m.mode = ModeNormal
@@ -127,6 +135,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleAutocompleteKey(msg)
 	case ModeHistory:
 		return m.handleHistoryKey(msg)
+	case ModeHelp:
+		return m.handleHelpKey(msg)
 	}
 
 	return m, nil
@@ -177,6 +187,14 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "down":
 		m.output.LineDown(1)
+		return m, nil
+
+	case "shift+up":
+		m.output.LineUp(8)
+		return m, nil
+
+	case "shift+down":
+		m.output.LineDown(8)
 		return m, nil
 
 	case "shift+left":
@@ -304,6 +322,16 @@ func (m Model) handleHistoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	default:
 		m.mode = ModeNormal
+		return m, nil
+	}
+}
+
+func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter", " ":
+		m.mode = ModeNormal
+		return m, nil
+	default:
 		return m, nil
 	}
 }

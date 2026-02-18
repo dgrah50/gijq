@@ -32,6 +32,12 @@ var (
 // renderView renders the full UI
 func (m Model) renderView() string {
 	header := m.renderHeader()
+	if m.mode == ModeHelp {
+		content := m.renderHelpContent()
+		footer := m.renderFooter()
+		return lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
+	}
+
 	content := m.renderContent()
 	footer := m.renderFooter()
 
@@ -47,7 +53,7 @@ func (m Model) renderView() string {
 
 func (m Model) renderHeader() string {
 	title := titleStyle.Render("gijq")
-	help := helpStyle.Render("tab: autocomplete | shift+left/right: h-scroll | alt/ctrl+left/right: word jump | ctrl+h: history | ctrl+y: copy output | ctrl+f: copy filter | enter: quit")
+	help := helpStyle.Render(m.compactHelpText())
 
 	var status string
 	if m.status != "" {
@@ -270,6 +276,91 @@ func (m Model) overlayHistory(base string) string {
 	content := strings.Join(lines, "\n")
 	overlay := historyOverlayStyle.Render(content)
 	return placeOverlay(base, overlay, m.width, m.height)
+}
+
+func (m Model) compactHelpText() string {
+	items := []string{
+		"?: help",
+		"tab: autocomplete",
+		"enter: quit",
+		"shift+up/down: fast scroll",
+		"shift+left/right: h-scroll",
+		"ctrl+h: history",
+		"ctrl+y: copy out",
+	}
+
+	if m.width <= 0 {
+		return items[0]
+	}
+
+	const reserveForTitle = 28
+	maxWidth := m.width - reserveForTitle
+	if maxWidth < 12 {
+		return items[0]
+	}
+
+	sep := " | "
+	line := ""
+	for _, item := range items {
+		candidate := item
+		if line != "" {
+			candidate = line + sep + item
+		}
+		if lipgloss.Width(candidate) > maxWidth {
+			break
+		}
+		line = candidate
+	}
+
+	if line == "" {
+		return items[0]
+	}
+	return line
+}
+
+func (m Model) renderHelpContent() string {
+	maxWidth := m.width - 8
+	if maxWidth < 44 {
+		maxWidth = m.width - 2
+	}
+	if maxWidth > 88 {
+		maxWidth = 88
+	}
+	if maxWidth < 24 {
+		maxWidth = 24
+	}
+
+	rows := []string{
+		titleStyle.Render("Keyboard Shortcuts"),
+		helpStyle.Render("esc or ?: close"),
+		"",
+		labelStyle.Render("Navigation"),
+		m.helpRow("Up/Down", "Scroll output"),
+		m.helpRow("Shift+Up/Down", "Fast scroll"),
+		m.helpRow("PgUp/PgDn", "Half-page scroll"),
+		m.helpRow("Shift+Left/Right", "Horizontal scroll"),
+		m.helpRow("Home/End", "Jump horizontal start/end"),
+		"",
+		labelStyle.Render("Editing"),
+		m.helpRow("Tab", "Autocomplete keys"),
+		m.helpRow("Alt/Ctrl+Left", "Prev word"),
+		m.helpRow("Alt/Ctrl+Right", "Next word"),
+		m.helpRow("Alt/Ctrl+Backspace", "Delete prev word"),
+		"",
+		labelStyle.Render("Actions"),
+		m.helpRow("Enter", "Output result and quit"),
+		m.helpRow("Ctrl+Y", "Copy output"),
+		m.helpRow("Ctrl+F", "Copy filter"),
+		m.helpRow("Ctrl+H", "Query history"),
+		m.helpRow("Esc/Ctrl+C", "Quit"),
+	}
+
+	panel := historyOverlayStyle.Width(maxWidth).Render(strings.Join(rows, "\n"))
+	return lipgloss.Place(m.width, m.contentHeight(), lipgloss.Center, lipgloss.Center, panel)
+}
+
+func (m Model) helpRow(key, desc string) string {
+	return suggestionStyle.Render(fmt.Sprintf("  %-18s %s", key, desc))
 }
 
 func placeOverlay(base, overlay string, width, height int) string {

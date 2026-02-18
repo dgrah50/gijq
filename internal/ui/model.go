@@ -22,6 +22,7 @@ const (
 	ModeNormal Mode = iota
 	ModeAutocomplete
 	ModeHistory
+	ModeHelp
 )
 
 const queryDebounce = 30 * time.Millisecond
