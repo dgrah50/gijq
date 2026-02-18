@@ -51,15 +51,20 @@ func run() error {
 	}
 
 	clip := clipboard.NewService()
+	telemetryEnabled := envEnabled("GIJQ_TELEMETRY")
 
 	// Create and run TUI
 	model := ui.NewModel(jqSvc, acSvc, hist, clip, ui.Config{
-		Filename: filename,
-		Filepath: filepath,
+		Filename:  filename,
+		Filepath:  filepath,
+		Telemetry: telemetryEnabled,
 	})
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err = p.Run()
+	finalModel, err := p.Run()
+	if telemetryEnabled {
+		printTelemetrySummary(finalModel, os.Stderr)
+	}
 	return err
 }
 
@@ -124,4 +129,22 @@ func getHistoryPath() string {
 		configDir = os.Getenv("HOME")
 	}
 	return filepath.Join(configDir, "gijq", "history.json")
+}
+
+func envEnabled(name string) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+func printTelemetrySummary(model tea.Model, w io.Writer) {
+	switch m := model.(type) {
+	case ui.Model:
+		if summary, ok := m.TelemetrySummary(); ok {
+			fmt.Fprintln(w, summary)
+		}
+	case *ui.Model:
+		if summary, ok := m.TelemetrySummary(); ok {
+			fmt.Fprintln(w, summary)
+		}
+	}
 }

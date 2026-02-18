@@ -2,8 +2,6 @@ package autocomplete
 
 import (
 	"strings"
-
-	"github.com/itchyny/gojq"
 )
 
 // Context represents the parsed autocomplete context
@@ -42,11 +40,10 @@ func Parse(filter string) Context {
 	path := workingFilter[:lastDot]
 	incomplete := workingFilter[lastDot+1:]
 
-	// Validate the path with gojq
 	if path == "" {
 		path = "."
 	}
-	if !isValidPath(path) {
+	if !isLikelyPath(path) {
 		// Path invalid, try without the last segment
 		return Context{Path: ".", Incomplete: workingFilter, StartPos: offset}
 	}
@@ -62,7 +59,6 @@ func Parse(filter string) Context {
 // (not inside brackets)
 func findLastKeyDot(s string) int {
 	bracketDepth := 0
-	lastDot := -1
 
 	for i := len(s) - 1; i >= 0; i-- {
 		switch s[i] {
@@ -72,22 +68,32 @@ func findLastKeyDot(s string) int {
 			bracketDepth--
 		case '.':
 			if bracketDepth == 0 {
-				lastDot = i
-				// Check if this is a valid split point
-				path := s[:i]
-				if path == "" || isValidPath(path) {
-					return i
-				}
+				return i
 			}
 		}
 	}
-	return lastDot
+	return -1
 }
 
-func isValidPath(path string) bool {
+func isLikelyPath(path string) bool {
 	if path == "" || path == "." {
 		return true
 	}
-	_, err := gojq.Parse(path)
-	return err == nil
+	if !strings.HasPrefix(path, ".") {
+		return false
+	}
+
+	depth := 0
+	for i := 0; i < len(path); i++ {
+		switch path[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth < 0 {
+				return false
+			}
+		}
+	}
+	return depth == 0
 }

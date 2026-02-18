@@ -114,6 +114,35 @@ Once inside, type any jq expression in the filter bar:
 | `Esc` | Close overlay, or exit |
 | `Ctrl+C` | Exit |
 
+## Performance Benchmarks
+
+Generate deterministic large test files:
+
+```sh
+go run ./scripts/generate_benchdata.go -out testdata/bench -sizes 10,55,100
+```
+
+Run the reproducible benchmark suite (query execution + typing replay):
+
+```sh
+go test ./internal/perf -run '^$' -bench . -benchmem
+```
+
+Capture CPU and memory profiles for analysis:
+
+```sh
+go test ./internal/perf -run '^$' -bench BenchmarkTypingReplay/55MB -cpuprofile cpu.out -memprofile mem.out
+go tool pprof -http=:0 cpu.out
+```
+
+Capture interactive keypress latency from real TUI sessions:
+
+```sh
+GIJQ_TELEMETRY=1 gijq testdata/bench/synthetic-55mb.json
+```
+
+At exit, `gijq` prints p50/p95/p99 keypress-to-frame timings to stderr.
+
 ## License
 
 MIT

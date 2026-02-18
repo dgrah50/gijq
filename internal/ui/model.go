@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -22,6 +23,8 @@ const (
 	ModeHistory
 )
 
+const queryDebounce = 30 * time.Millisecond
+
 // Model is the Bubble Tea model
 type Model struct {
 	// Services
@@ -34,15 +37,29 @@ type Model struct {
 	filter textinput.Model
 	output viewport.Model
 	result jq.Result
+	lines  []string
 
 	// Autocomplete state
-	suggestions []string
-	selectedIdx int
-	acContext   autocomplete.Context
+	suggestions   []string
+	selectedIdx   int
+	acContext     autocomplete.Context
+	keysPath      string
+	keysInFlight  string
+	availableKeys []string
 
 	// History state
 	historyItems []string
 	historyIdx   int
+
+	// Query execution state
+	querySeq       int
+	activeQuerySeq int
+	queryCancel    context.CancelFunc
+	queryRunning   bool
+
+	// Render cache
+	colorCache *lineColorCache
+	telemetry  *latencyTelemetry
 
 	// UI state
 	mode        Mode
@@ -57,8 +74,9 @@ type Model struct {
 
 // Config holds initialization options
 type Config struct {
-	Filename string
-	Filepath string
+	Filename  string
+	Filepath  string
+	Telemetry bool
 }
 
 // NewModel creates a new UI model
@@ -75,6 +93,7 @@ func NewModel(
 	ti.CharLimit = 500
 	ti.Width = 50
 	ti.SetValue(".")
+	initialCtx := acSvc.ParseContext(ti.Value())
 
 	return Model{
 		jq:           jqSvc,
@@ -85,6 +104,12 @@ func NewModel(
 		filename:     cfg.Filename,
 		filepath:     cfg.Filepath,
 		mode:         ModeNormal,
+		acContext:    initialCtx,
+		keysInFlight: initialCtx.Path,
+		querySeq:     1,
+		colorCache:   newLineColorCache(4096),
+		lines:        []string{""},
+		telemetry:    newLatencyTelemetry(cfg.Telemetry),
 	}
 }
 
@@ -92,22 +117,25 @@ func NewModel(
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		textinput.Blink,
-		m.executeFilter(),
+		func() tea.Msg { return executeQueryMsg{seq: m.querySeq} },
+		m.fetchKeys(m.currentPath()),
 	)
-}
-
-// executeFilter runs the jq filter and returns a command
-func (m Model) executeFilter() tea.Cmd {
-	filter := m.filter.Value()
-	return func() tea.Msg {
-		result := m.jq.Execute(filter)
-		return resultMsg{result: result}
-	}
 }
 
 // Message types
 type resultMsg struct {
+	seq    int
 	result jq.Result
+}
+
+type executeQueryMsg struct {
+	seq int
+}
+
+type keysMsg struct {
+	path string
+	keys []string
+	err  error
 }
 
 type statusClearMsg struct{}
@@ -116,6 +144,59 @@ func clearStatusAfter(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg {
 		return statusClearMsg{}
 	})
+}
+
+func (m Model) fetchKeys(path string) tea.Cmd {
+	if path == "" {
+		path = "."
+	}
+	return func() tea.Msg {
+		keys, err := m.jq.KeysAt(path)
+		return keysMsg{path: path, keys: keys, err: err}
+	}
+}
+
+func (m *Model) queueExecute() tea.Cmd {
+	m.querySeq++
+	seq := m.querySeq
+	m.telemetry.OnQueued(seq)
+	return tea.Tick(queryDebounce, func(time.Time) tea.Msg {
+		return executeQueryMsg{seq: seq}
+	})
+}
+
+func (m *Model) executeNow() tea.Cmd {
+	m.querySeq++
+	m.telemetry.OnQueued(m.querySeq)
+	return m.startExecute(m.querySeq)
+}
+
+func (m *Model) startExecute(seq int) tea.Cmd {
+	if m.queryCancel != nil {
+		m.queryCancel()
+		m.queryCancel = nil
+	}
+
+	m.activeQuerySeq = seq
+	m.queryRunning = true
+	m.telemetry.OnDispatch(seq)
+
+	filter := m.filter.Value()
+	ctx, cancel := context.WithCancel(context.Background())
+	m.queryCancel = cancel
+
+	return func() tea.Msg {
+		result := m.jq.ExecuteWithContext(ctx, filter)
+		return resultMsg{seq: seq, result: result}
+	}
+}
+
+// TelemetrySummary returns a printable latency summary when telemetry is enabled.
+func (m Model) TelemetrySummary() (string, bool) {
+	if m.telemetry == nil {
+		return "", false
+	}
+	return m.telemetry.Summary()
 }
 
 // View renders the UI

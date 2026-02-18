@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -30,7 +32,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case resultMsg:
+		m.telemetry.OnResult(msg.seq, msg.result.Error, msg.seq == m.activeQuerySeq)
+		if msg.seq != m.activeQuerySeq {
+			return m, nil
+		}
+		m.queryRunning = false
+		m.queryCancel = nil
+		if errors.Is(msg.result.Error, context.Canceled) {
+			return m, nil
+		}
 		m.result = msg.result
+		if msg.result.Error != nil {
+			m.lines = strings.Split(msg.result.Error.Error(), "\n")
+		} else {
+			m.lines = strings.Split(msg.result.Raw, "\n")
+		}
 		if m.ready {
 			// Set raw content for viewport scrolling calculation
 			if msg.result.Error != nil {
@@ -39,6 +55,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.output.SetContent(msg.result.Raw)
 			}
 		}
+		return m, nil
+
+	case executeQueryMsg:
+		if msg.seq != m.querySeq {
+			m.telemetry.OnDebounceDropped(msg.seq)
+			return m, nil
+		}
+		return m, m.startExecute(msg.seq)
+
+	case keysMsg:
+		if m.keysInFlight == msg.path {
+			m.keysInFlight = ""
+		}
+		if msg.path != m.currentPath() {
+			return m, nil
+		}
+		m.keysPath = msg.path
+		if msg.err != nil {
+			m.availableKeys = nil
+			return m, nil
+		}
+		m.availableKeys = msg.keys
 		return m, nil
 
 	case statusClearMsg:
@@ -156,15 +194,15 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "alt+backspace", "ctrl+backspace", "ctrl+w":
 		if m.deletePrevWord() {
-			_, m.acContext = m.autocomplete.Suggest(m.filter.Value())
-			return m, m.executeFilter()
+			m.acContext = m.autocomplete.ParseContext(m.filter.Value())
+			return m, tea.Batch(m.queueExecute(), m.maybeFetchKeys())
 		}
 		return m, nil
 
 	case "alt+delete", "alt+d", "ctrl+delete":
 		if m.deleteNextWord() {
-			_, m.acContext = m.autocomplete.Suggest(m.filter.Value())
-			return m, m.executeFilter()
+			m.acContext = m.autocomplete.ParseContext(m.filter.Value())
+			return m, tea.Batch(m.queueExecute(), m.maybeFetchKeys())
 		}
 		return m, nil
 
@@ -173,8 +211,8 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.filter, cmd = m.filter.Update(msg)
 		// Update autocomplete context so Available keys panel stays in sync
-		_, m.acContext = m.autocomplete.Suggest(m.filter.Value())
-		return m, tea.Batch(cmd, m.executeFilter())
+		m.acContext = m.autocomplete.ParseContext(m.filter.Value())
+		return m, tea.Batch(cmd, m.queueExecute(), m.maybeFetchKeys())
 	}
 }
 
@@ -206,7 +244,8 @@ func (m Model) handleAutocompleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = ModeNormal
 		m.suggestions = nil
-		return m, m.executeFilter()
+		m.acContext = m.autocomplete.ParseContext(m.filter.Value())
+		return m, tea.Batch(m.executeNow(), m.maybeFetchKeys())
 
 	default:
 		// Any other key exits autocomplete and processes normally
@@ -241,7 +280,8 @@ func (m Model) handleHistoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter.SetCursor(len(m.historyItems[m.historyIdx]))
 		}
 		m.mode = ModeNormal
-		return m, m.executeFilter()
+		m.acContext = m.autocomplete.ParseContext(m.filter.Value())
+		return m, tea.Batch(m.executeNow(), m.maybeFetchKeys())
 
 	default:
 		m.mode = ModeNormal
@@ -370,6 +410,21 @@ func nextWordDeleteEnd(value string, pos int) int {
 
 func isWordRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+}
+
+func (m *Model) maybeFetchKeys() tea.Cmd {
+	path := m.currentPath()
+	if path == "" {
+		path = "."
+	}
+	if path == m.keysPath || path == m.keysInFlight {
+		return nil
+	}
+	if path != m.keysPath {
+		m.availableKeys = nil
+	}
+	m.keysInFlight = path
+	return m.fetchKeys(path)
 }
 
 func (m Model) copyFilter() (tea.Model, tea.Cmd) {

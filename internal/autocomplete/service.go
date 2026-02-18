@@ -17,9 +17,14 @@ func NewService(jqSvc *jq.Service) *Service {
 	return &Service{jq: jqSvc}
 }
 
+// ParseContext extracts path/incomplete state without querying keys.
+func (s *Service) ParseContext(filter string) Context {
+	return Parse(filter)
+}
+
 // Suggest returns matching keys for the current filter
 func (s *Service) Suggest(filter string) ([]string, Context) {
-	ctx := Parse(filter)
+	ctx := s.ParseContext(filter)
 
 	// If filter contains a pipe, resolve context from the left side's output
 	var keys []string

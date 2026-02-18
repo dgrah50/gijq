@@ -51,6 +51,8 @@ func (m Model) renderHeader() string {
 	var status string
 	if m.status != "" {
 		status = statusStyle.Render(m.status)
+	} else if m.queryRunning {
+		status = helpStyle.Render("Running...")
 	} else if m.result.Error != nil {
 		status = errorStyle.Render("Error: " + m.result.Error.Error())
 	}
@@ -61,16 +63,11 @@ func (m Model) renderHeader() string {
 func (m Model) renderContent() string {
 	outputWidth := m.width - m.suggestWidth() - 5
 
-	// Get the raw content and colorize it
-	var content string
-	if m.result.Error != nil {
-		content = errorStyle.Render(m.result.Error.Error())
-	} else {
-		content = colorizeJSON(m.result.Raw)
+	lines := m.lines
+	if len(lines) == 0 {
+		lines = []string{""}
 	}
 
-	// Apply scrolling manually based on viewport position
-	lines := strings.Split(content, "\n")
 	startLine := m.output.YOffset
 	endLine := startLine + m.contentHeight()
 	if endLine > len(lines) {
@@ -84,7 +81,14 @@ func (m Model) renderContent() string {
 
 	// Manually pad each line to width (preserves ANSI codes)
 	var paddedLines []string
-	for _, line := range visibleLines {
+	for _, rawLine := range visibleLines {
+		line := rawLine
+		if m.result.Error != nil {
+			line = errorStyle.Render(rawLine)
+		} else {
+			line = m.colorCache.Colorize(rawLine)
+		}
+
 		displayWidth := lipgloss.Width(line)
 		if displayWidth < outputWidth {
 			line += strings.Repeat(" ", outputWidth-displayWidth)
@@ -190,7 +194,10 @@ func (m Model) renderSuggestions() string {
 	}
 
 	// Show current path keys when not in autocomplete
-	keys, _ := m.jq.KeysAt(m.currentPath())
+	keys := m.availableKeys
+	if m.keysInFlight == m.currentPath() && len(keys) == 0 {
+		return labelStyle.Render("Loading keys...")
+	}
 	if len(keys) == 0 {
 		return labelStyle.Render("No keys")
 	}
