@@ -1,6 +1,7 @@
 package autocomplete
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/dayangraham/gijq/internal/jq"
@@ -73,4 +74,20 @@ func equalSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestSuggestArrayIndexOrder(t *testing.T) {
+	jqSvc, _ := jq.NewService([]byte(`{"items":[0,1,2,3,4,5,6,7,8,9,10,11]}`))
+	svc := NewService(jqSvc)
+	got, _ := svc.Suggest(".items")
+	_ = got
+	got, _ = svc.Suggest(".items.")
+	if len(got) < 12 {
+		t.Fatalf("got %v", got)
+	}
+	for i := 0; i < 12; i++ {
+		if want := fmt.Sprintf("[%d]", i); got[i] != want {
+			t.Fatalf("pos %d: got %q want %q (%v)", i, got[i], want, got)
+		}
+	}
 }

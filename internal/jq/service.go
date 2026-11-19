@@ -15,18 +15,17 @@ import (
 
 // Result holds both display and raw output from jq execution
 type Result struct {
-	Colored string // Syntax highlighted for display
-	Raw     string // Plain text for clipboard
-	Error   error
+	Raw   string // Plain text for display and clipboard
+	Error error
 }
 
 // Service wraps gojq for executing jq filters
 type Service struct {
 	data any // Parsed JSON kept in memory
 
-	mu        sync.RWMutex
-	codeCache map[string]*gojq.Code
-	keysCache map[string][]string
+	mu        sync.Mutex // LRU Get mutates recency, so a plain mutex is used
+	codeCache *lru[*gojq.Code]
+	keysCache *lru[[]string]
 }
 
 // NewService creates a jq service from JSON bytes
@@ -42,8 +41,8 @@ func NewService(jsonData []byte) (*Service, error) {
 
 	return &Service{
 		data:      data,
-		codeCache: map[string]*gojq.Code{},
-		keysCache: map[string][]string{},
+		codeCache: newLRU[*gojq.Code](cacheCap),
+		keysCache: newLRU[[]string](cacheCap),
 	}, nil
 }
 
@@ -74,27 +73,41 @@ func (s *Service) ExecuteWithContext(ctx context.Context, filter string) Result 
 		}
 		results = append(results, v)
 	}
+	if err := ctx.Err(); err != nil {
+		return Result{Error: err}
+	}
 
-	raw := formatResults(results)
-	colored := Colorize(raw)
-
-	return Result{Raw: raw, Colored: colored}
+	raw, err := formatResults(ctx, results)
+	if err != nil {
+		return Result{Error: err}
+	}
+	return Result{Raw: raw}
 }
 
-func formatResults(results []any) string {
+func formatResults(ctx context.Context, results []any) (string, error) {
 	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
 	for i, r := range results {
+		if i&255 == 255 {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
 		if i > 0 {
 			buf.WriteByte('\n')
 		}
-		b, err := json.MarshalIndent(r, "", "  ")
-		if err != nil {
-			buf.WriteString(fmt.Sprintf("%v", r))
-		} else {
-			buf.Write(b)
+		start := buf.Len()
+		if err := enc.Encode(r); err != nil {
+			buf.Truncate(start)
+			fmt.Fprintf(&buf, "%v", r)
+			continue
 		}
+		// Encode appends a trailing newline; drop it.
+		buf.Truncate(buf.Len() - 1)
 	}
-	return buf.String()
+	return buf.String(), nil
 }
 
 // Data returns the parsed JSON data (for autocomplete)
@@ -104,12 +117,17 @@ func (s *Service) Data() any {
 
 // KeysAt returns available keys at the given jq path
 func (s *Service) KeysAt(path string) ([]string, error) {
+	return s.KeysAtWithContext(context.Background(), path)
+}
+
+// KeysAtWithContext is KeysAt with cancellation support.
+func (s *Service) KeysAtWithContext(ctx context.Context, path string) ([]string, error) {
 	if path == "" {
 		path = "."
 	}
 
 	if keys, ok := s.cachedKeys(path); ok {
-		return keys, nil
+		return cloneStrings(keys), nil
 	}
 
 	if keys, ok := keysAtSimplePath(s.data, path); ok {
@@ -122,9 +140,12 @@ func (s *Service) KeysAt(path string) ([]string, error) {
 		return nil, err
 	}
 
-	iter := code.Run(s.data)
+	iter := code.RunWithContext(ctx, s.data)
 	v, ok := iter.Next()
 	if !ok {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		s.storeKeys(path, nil)
 		return nil, nil
 	}
@@ -163,46 +184,46 @@ func extractKeys(v any) []string {
 	}
 }
 
+// cachedKeys returns the cached slice itself; callers must clone before
+// handing it out.
 func (s *Service) cachedKeys(path string) ([]string, bool) {
-	s.mu.RLock()
-	keys, ok := s.keysCache[path]
-	s.mu.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	return cloneStrings(keys), true
+	s.mu.Lock()
+	keys, ok := s.keysCache.Get(path)
+	s.mu.Unlock()
+	return keys, ok
 }
 
+// storeKeys takes ownership of keys; the cache never exposes it uncloned.
 func (s *Service) storeKeys(path string, keys []string) {
 	s.mu.Lock()
-	s.keysCache[path] = cloneStrings(keys)
+	s.keysCache.Put(path, keys)
 	s.mu.Unlock()
 }
 
 func (s *Service) compiledQuery(filter string) (*gojq.Code, error) {
-	s.mu.RLock()
-	if code, ok := s.codeCache[filter]; ok {
-		s.mu.RUnlock()
+	s.mu.Lock()
+	code, ok := s.codeCache.Get(filter)
+	s.mu.Unlock()
+	if ok {
 		return code, nil
 	}
-	s.mu.RUnlock()
 
 	query, err := gojq.Parse(filter)
 	if err != nil {
 		return nil, fmt.Errorf("parse error: %w", err)
 	}
 
-	code, err := gojq.Compile(query)
+	code, err = gojq.Compile(query)
 	if err != nil {
 		return nil, fmt.Errorf("compile error: %w", err)
 	}
 
 	s.mu.Lock()
-	if existing, ok := s.codeCache[filter]; ok {
+	if existing, ok := s.codeCache.Get(filter); ok {
 		s.mu.Unlock()
 		return existing, nil
 	}
-	s.codeCache[filter] = code
+	s.codeCache.Put(filter, code)
 	s.mu.Unlock()
 	return code, nil
 }
