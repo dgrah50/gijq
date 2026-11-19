@@ -7,24 +7,17 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-func TestClipRawLine(t *testing.T) {
+func TestHighlightWindowEllipsis(t *testing.T) {
 	line := "abcdefghijklmnopqrstuvwxyz"
-	got, left, right := clipRawLine(line, 5, 8)
-	if got != "fghijklm" {
-		t.Fatalf("clipRawLine() got %q, want %q", got, "fghijklm")
+	got, w, left, right := highlightWindow(line, 5, 8, false, nil)
+	if got != "…fghijk…" || w != 8 {
+		t.Fatalf("got %q w=%d, want %q w=8", got, w, "…fghijk…")
 	}
 	if !left || !right {
-		t.Fatalf("clip flags got left=%v right=%v, want true,true", left, right)
+		t.Fatalf("cut flags got left=%v right=%v, want true,true", left, right)
 	}
-}
-
-func TestWithEllipsisWidth(t *testing.T) {
-	got := withEllipsis("abcdefgh", 6, true, true)
-	if runewidth.StringWidth(got) != 6 {
-		t.Fatalf("withEllipsis width = %d, want 6 (%q)", runewidth.StringWidth(got), got)
-	}
-	if !strings.HasPrefix(got, "…") || !strings.HasSuffix(got, "…") {
-		t.Fatalf("withEllipsis missing markers: %q", got)
+	if runewidth.StringWidth(got) != w || !strings.HasPrefix(got, "…") || !strings.HasSuffix(got, "…") {
+		t.Fatalf("bad markers/width: %q", got)
 	}
 }
 

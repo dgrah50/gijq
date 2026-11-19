@@ -8,8 +8,8 @@ import (
 func TestCompactHelpText(t *testing.T) {
 	narrow := Model{width: 30}
 	help := narrow.compactHelpText()
-	if help != "?: help" {
-		t.Fatalf("narrow help = %q, want %q", help, "?: help")
+	if help != "f1: help" {
+		t.Fatalf("narrow help = %q, want %q", help, "f1: help")
 	}
 
 	wide := Model{width: 200}

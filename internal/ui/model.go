@@ -2,12 +2,11 @@ package ui
 
 import (
 	"context"
+	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mattn/go-runewidth"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/dayangraham/gijq/internal/autocomplete"
 	"github.com/dayangraham/gijq/internal/clipboard"
@@ -37,20 +36,19 @@ type Model struct {
 
 	// Input/Output
 	filter textinput.Model
-	output viewport.Model
 	result jq.Result
 	lines  []string
+	// yOffset is the index of the first visible output line.
+	yOffset int
 	// Output geometry state
 	outputXOffset int
 	maxLineWidth  int
 
 	// Autocomplete state
-	suggestions   []string
-	selectedIdx   int
-	acContext     autocomplete.Context
-	keysPath      string
-	keysInFlight  string
-	availableKeys []string
+	suggestions []string
+	selectedIdx int
+	acContext   autocomplete.Context
+	keys        keysState
 
 	// History state
 	historyItems []string
@@ -63,18 +61,29 @@ type Model struct {
 	queryRunning   bool
 
 	// Render cache
-	colorCache *lineColorCache
-	telemetry  *latencyTelemetry
+	hl        *highlightCache
+	telemetry *latencyTelemetry
 
 	// UI state
-	mode        Mode
-	filename    string
-	filepath    string
-	status      string
-	statusClear time.Time
-	width       int
-	height      int
-	ready       bool
+	mode      Mode
+	filename  string
+	filepath  string
+	status    string
+	statusSeq int
+	helpLine  string
+	width     int
+	height    int
+	ready     bool
+
+	// Output printed to stdout by the caller after the program exits.
+	output    string
+	confirmed bool
+}
+
+// Output returns the text to print to stdout after the TUI exits and whether
+// the user confirmed it with Enter.
+func (m Model) Output() (string, bool) {
+	return m.output, m.confirmed
 }
 
 // Config holds initialization options
@@ -96,11 +105,11 @@ func NewModel(
 	ti.Placeholder = "."
 	ti.Focus()
 	ti.CharLimit = 500
-	ti.Width = 50
+	ti.SetWidth(50)
 	ti.SetValue(".")
 	initialCtx := acSvc.ParseContext(ti.Value())
 
-	return Model{
+	m := Model{
 		jq:           jqSvc,
 		autocomplete: acSvc,
 		history:      hist,
@@ -110,13 +119,14 @@ func NewModel(
 		filepath:     cfg.Filepath,
 		mode:         ModeNormal,
 		acContext:    initialCtx,
-		keysInFlight: initialCtx.Path,
 		querySeq:     1,
-		colorCache:   newLineColorCache(4096),
+		hl:           newHighlightCache(),
 		lines:        []string{""},
 		maxLineWidth: 0,
 		telemetry:    newLatencyTelemetry(cfg.Telemetry),
 	}
+	m.keys.request(m.currentPath())
+	return m
 }
 
 // Init initializes the model
@@ -132,6 +142,11 @@ func (m Model) Init() tea.Cmd {
 type resultMsg struct {
 	seq    int
 	result jq.Result
+	// Post-processed off the UI goroutine.
+	lines        []string
+	maxLineWidth int
+	// Highlight checkpoints for long lines, keyed by line index.
+	checkpoints map[int][]hlCheckpoint
 }
 
 type executeQueryMsg struct {
@@ -144,11 +159,16 @@ type keysMsg struct {
 	err  error
 }
 
-type statusClearMsg struct{}
+type statusClearMsg struct{ seq int }
 
-func clearStatusAfter(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(time.Time) tea.Msg {
-		return statusClearMsg{}
+// setStatus shows a status message and returns the command that clears it.
+// Only the most recent status's timer can clear it.
+func (m *Model) setStatus(text string) tea.Cmd {
+	m.statusSeq++
+	m.status = text
+	seq := m.statusSeq
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg {
+		return statusClearMsg{seq: seq}
 	})
 }
 
@@ -193,14 +213,44 @@ func (m *Model) startExecute(seq int) tea.Cmd {
 
 	return func() tea.Msg {
 		result := m.jq.ExecuteWithContext(ctx, filter)
-		return resultMsg{seq: seq, result: result}
+		lines, maxW := processResult(result)
+		var cps map[int][]hlCheckpoint
+		if ctx.Err() == nil {
+			cps = prebuildCheckpoints(lines)
+		}
+		return resultMsg{seq: seq, result: result, lines: lines, maxLineWidth: maxW, checkpoints: cps}
 	}
+}
+
+// processResult splits a result into display lines and measures the widest
+// one. It is CPU heavy for large outputs and must run off the UI goroutine.
+func processResult(result jq.Result) ([]string, int) {
+	var lines []string
+	if result.Error != nil {
+		lines = strings.Split(result.Error.Error(), "\n")
+	} else {
+		lines = strings.Split(result.Raw, "\n")
+	}
+	return lines, maxDisplayLineWidth(lines)
+}
+
+func lineDisplayWidth(line string) int {
+	for i := 0; i < len(line); i++ {
+		if line[i] >= 0x80 {
+			w := 0
+			for _, r := range line {
+				w += runeWidth(r)
+			}
+			return w
+		}
+	}
+	return len(line)
 }
 
 func maxDisplayLineWidth(lines []string) int {
 	maxWidth := 0
 	for _, line := range lines {
-		w := runewidth.StringWidth(line)
+		w := lineDisplayWidth(line)
 		if w > maxWidth {
 			maxWidth = w
 		}
@@ -217,9 +267,12 @@ func (m Model) TelemetrySummary() (string, bool) {
 }
 
 // View renders the UI
-func (m Model) View() string {
-	if !m.ready {
-		return "Loading..."
+func (m Model) View() tea.View {
+	content := "Loading..."
+	if m.ready {
+		content = m.renderView()
 	}
-	return m.renderView()
+	v := tea.NewView(content)
+	v.AltScreen = true
+	return v
 }

@@ -25,7 +25,7 @@ cat data.json | gijq
 
 ## Install
 
-Requires Go 1.24+.
+Requires Go 1.26+.
 
 ```
 go install github.com/dayangraham/gijq@latest
@@ -105,7 +105,7 @@ Once inside, type any jq expression in the filter bar:
 |---|---|
 | *type* | Filter updates, results refresh live |
 | `Tab` | Cycle autocomplete suggestions |
-| `?` | Toggle shortcut help overlay |
+| `F1` / `Ctrl+/` | Toggle shortcut help overlay |
 | `Enter` | Output current result to stdout and exit |
 | `Ctrl+Y` | Copy JSON output to clipboard |
 | `Ctrl+F` | Copy filter to clipboard |

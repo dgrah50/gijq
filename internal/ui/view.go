@@ -2,11 +2,11 @@ package ui
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
+	"sync"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Raw ANSI color codes for JSON syntax highlighting
@@ -21,27 +21,14 @@ const (
 	ansiWhite   = "\x1b[37m" // Brackets
 )
 
-var (
-	jsonStringRe = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
-	jsonNumberRe = regexp.MustCompile(`:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)`)
-	jsonBoolRe   = regexp.MustCompile(`:\s*(true|false)`)
-	jsonNullRe   = regexp.MustCompile(`:\s*(null)`)
-	jsonKeyRe    = regexp.MustCompile(`"([^"]+)"(\s*:)`)
-)
-
 // renderView renders the full UI
 func (m Model) renderView() string {
 	header := m.renderHeader()
 	if m.mode == ModeHelp {
-		content := m.renderHelpContent()
-		footer := m.renderFooter()
-		return lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
+		return header + "\n" + m.renderHelpContent() + "\n" + m.renderFooter()
 	}
 
-	content := m.renderContent()
-	footer := m.renderFooter()
-
-	view := lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
+	view := header + "\n" + m.renderContent() + "\n" + m.renderFooter()
 
 	// Overlay history if in history mode
 	if m.mode == ModeHistory {
@@ -53,142 +40,196 @@ func (m Model) renderView() string {
 
 func (m Model) renderHeader() string {
 	title := titleStyle.Render("gijq")
-	help := helpStyle.Render(m.compactHelpText())
+	helpText := m.helpLine
+	if helpText == "" {
+		helpText = m.compactHelpText()
+	}
+	help := helpStyle.Render(helpText)
 
 	var status string
 	if m.status != "" {
-		status = statusStyle.Render(m.status)
+		status = statusStyle.Render(m.fitStatus(m.status))
 	} else if m.queryRunning {
 		status = helpStyle.Render("Running...")
 	} else if m.result.Error != nil {
-		status = errorStyle.Render("Error: " + m.result.Error.Error())
+		status = errorStyle.Render(m.fitStatus("Error: " + m.result.Error.Error()))
 	}
 
 	return fmt.Sprintf("%s  %s\n%s\n", title, help, status)
 }
 
+var (
+	errWrapOnce   sync.Once
+	errPre, errSu string
+)
+
+// errorWrap returns the escape prefix/suffix errorStyle puts around text.
+func errorWrap() (string, string) {
+	errWrapOnce.Do(func() {
+		pre, suf, _ := strings.Cut(errorStyle.Render("x"), "x")
+		errPre, errSu = pre, suf
+	})
+	return errPre, errSu
+}
+
+// borderGlyphStyle colours border glyphs the same way borderStyle does.
+var borderGlyphStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+
+// bar is the pre-rendered vertical border glyph.
+var bar = borderGlyphStyle.Render("│")
+
+type borderKey struct {
+	bottom bool
+	w      int
+}
+
+var (
+	borderMu   sync.Mutex
+	borderMemo = map[borderKey]string{}
+)
+
+const borderMemoLimit = 64
+
+func borderLine(bottom bool, w int) string {
+	k := borderKey{bottom, w}
+	borderMu.Lock()
+	defer borderMu.Unlock()
+	if s, ok := borderMemo[k]; ok {
+		return s
+	}
+	l, r := "╭", "╮"
+	if bottom {
+		l, r = "╰", "╯"
+	}
+	s := borderGlyphStyle.Render(l + strings.Repeat("─", w) + r)
+	if len(borderMemo) >= borderMemoLimit {
+		clear(borderMemo)
+	}
+	borderMemo[k] = s
+	return s
+}
+
+func borderTop(w int) string    { return borderLine(false, w) }
+func borderBottom(w int) string { return borderLine(true, w) }
+
+// fitStatus reduces text to its first line, truncated to the terminal width.
+func (m Model) fitStatus(text string) string {
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = text[:i]
+	}
+	if m.width > 0 {
+		text = ansi.Truncate(text, m.width, "…")
+	}
+	return text
+}
+
 func (m Model) renderContent() string {
 	outputWidth := m.outputContentWidth()
+	height := m.contentHeight()
+	if height < 0 {
+		height = 0
+	}
 
 	lines := m.lines
 	if len(lines) == 0 {
 		lines = []string{""}
 	}
 
-	startLine := m.output.YOffset
-	endLine := startLine + m.contentHeight()
-	if endLine > len(lines) {
-		endLine = len(lines)
-	}
+	startLine := m.yOffset
 	if startLine > len(lines) {
 		startLine = len(lines)
 	}
-
+	endLine := startLine + height
+	if endLine > len(lines) {
+		endLine = len(lines)
+	}
 	visibleLines := lines[startLine:endLine]
 
-	// Manually pad each line to width (preserves ANSI codes)
-	var paddedLines []string
-	for _, rawLine := range visibleLines {
-		clippedRaw, leftCut, rightCut := clipRawLine(rawLine, m.outputXOffset, outputWidth)
-		clippedRaw = withEllipsis(clippedRaw, outputWidth, leftCut, rightCut)
+	// Render each output row, already padded to outputWidth.
+	rows := make([]string, 0, height)
+	errPre, errSu := errorWrap()
+	isErr := m.result.Error != nil
+	var sb strings.Builder
+	for i, rawLine := range visibleLines {
+		text, w, _, _ := highlightWindow(rawLine, m.outputXOffset, outputWidth, !isErr, m.hl.forLine(startLine+i, rawLine))
 
-		line := rawLine
-		if m.result.Error != nil {
-			line = errorStyle.Render(clippedRaw)
+		sb.Reset()
+		if isErr && text != "" {
+			sb.WriteString(errPre)
+			sb.WriteString(text)
+			sb.WriteString(errSu)
 		} else {
-			line = m.colorCache.Colorize(clippedRaw)
+			sb.WriteString(text)
 		}
-
-		displayWidth := lipgloss.Width(line)
-		if displayWidth < outputWidth {
-			line += strings.Repeat(" ", outputWidth-displayWidth)
+		if w < outputWidth {
+			writeSpaces(&sb, outputWidth-w)
 		}
-		paddedLines = append(paddedLines, line)
+		rows = append(rows, sb.String())
 	}
-
-	// Pad to fill height
 	emptyLine := strings.Repeat(" ", outputWidth)
-	for len(paddedLines) < m.contentHeight() {
-		paddedLines = append(paddedLines, emptyLine)
+	for len(rows) < height {
+		rows = append(rows, emptyLine)
 	}
 
-	visibleContent := strings.Join(paddedLines, "\n")
-
-	// Only use borderStyle for border chrome, not Width/Height constraints
-	outputPane := borderStyle.Width(outputWidth).Height(m.contentHeight()).Render(visibleContent)
-
-	if !m.showSuggestionPane() {
-		return outputPane
+	showSuggest := m.showSuggestionPane()
+	var suggestRows []string
+	suggestWidth := m.suggestWidth()
+	if showSuggest {
+		suggestRows = m.renderSuggestions()
 	}
 
-	suggestPane := m.renderSuggestions()
-	return lipgloss.JoinHorizontal(lipgloss.Top,
-		outputPane,
-		" ",
-		borderStyle.Width(m.suggestWidth()).Height(m.contentHeight()).Render(suggestPane),
-	)
+	out := make([]string, 0, height+2)
+	top := borderTop(outputWidth)
+	bottom := borderBottom(outputWidth)
+	if showSuggest {
+		top += " " + borderTop(suggestWidth)
+		bottom += " " + borderBottom(suggestWidth)
+	}
+	out = append(out, top)
+	for i := 0; i < height; i++ {
+		sb.Reset()
+		sb.WriteString(bar)
+		sb.WriteString(rows[i])
+		sb.WriteString(bar)
+		if showSuggest {
+			sb.WriteByte(' ')
+			sb.WriteString(bar)
+			sb.WriteString(fitToWidth(suggestRows, i, suggestWidth))
+			sb.WriteString(bar)
+		}
+		out = append(out, sb.String())
+	}
+	out = append(out, bottom)
+	return strings.Join(out, "\n")
 }
 
-// colorizeJSON applies syntax highlighting to JSON using raw ANSI codes
-func colorizeJSON(s string) string {
-	// Color brackets/braces FIRST in a single pass (individual ReplaceAll calls
-	// would corrupt each other since ANSI codes contain [ and ] characters)
-	bracketReplacer := strings.NewReplacer(
-		"{", ansiWhite+"{"+ansiReset,
-		"}", ansiWhite+"}"+ansiReset,
-		"[", ansiWhite+"["+ansiReset,
-		"]", ansiWhite+"]"+ansiReset,
-	)
-	result := bracketReplacer.Replace(s)
-
-	// Color keys (ANSI codes go inside quotes so the string regex detects and skips them)
-	result = jsonKeyRe.ReplaceAllStringFunc(result, func(match string) string {
-		parts := jsonKeyRe.FindStringSubmatch(match)
-		if len(parts) >= 3 {
-			return "\"" + ansiCyan + parts[1] + ansiReset + "\"" + parts[2]
-		}
-		return match
-	})
-
-	// Color string values (not keys - they're already colored)
-	result = jsonStringRe.ReplaceAllStringFunc(result, func(match string) string {
-		if strings.Contains(match, "\x1b[") {
-			return match
-		}
-		return ansiGreen + match + ansiReset
-	})
-
-	// Color numbers (values after colon)
-	result = jsonNumberRe.ReplaceAllStringFunc(result, func(match string) string {
-		parts := jsonNumberRe.FindStringSubmatch(match)
-		if len(parts) >= 2 {
-			return ": " + ansiYellow + parts[1] + ansiReset
-		}
-		return match
-	})
-
-	// Color booleans
-	result = jsonBoolRe.ReplaceAllStringFunc(result, func(match string) string {
-		parts := jsonBoolRe.FindStringSubmatch(match)
-		if len(parts) >= 2 {
-			return ": " + ansiMagenta + parts[1] + ansiReset
-		}
-		return match
-	})
-
-	// Color null
-	result = jsonNullRe.ReplaceAllStringFunc(result, func(match string) string {
-		parts := jsonNullRe.FindStringSubmatch(match)
-		if len(parts) >= 2 {
-			return ": " + ansiGray + parts[1] + ansiReset
-		}
-		return match
-	})
-
-	return result
+func writeSpaces(sb *strings.Builder, n int) {
+	const spaces = "                                                                "
+	for n > len(spaces) {
+		sb.WriteString(spaces)
+		n -= len(spaces)
+	}
+	sb.WriteString(spaces[:n])
 }
 
-func (m Model) renderSuggestions() string {
+// fitToWidth returns rows[i] truncated/padded to exactly width columns.
+func fitToWidth(rows []string, i, width int) string {
+	line := ""
+	if i < len(rows) {
+		line = rows[i]
+	}
+	w := ansi.StringWidth(line)
+	if w > width {
+		line = ansi.Truncate(line, width, "")
+		w = ansi.StringWidth(line)
+	}
+	if w < width {
+		line += strings.Repeat(" ", width-w)
+	}
+	return line
+}
+
+func (m Model) renderSuggestions() []string {
 	if m.mode == ModeAutocomplete && len(m.suggestions) > 0 {
 		var lines []string
 		lines = append(lines, labelStyle.Render("Keys:"))
@@ -203,20 +244,19 @@ func (m Model) renderSuggestions() string {
 				break
 			}
 		}
-		return strings.Join(lines, "\n")
+		return lines
 	}
 
 	// Show current path keys when not in autocomplete
-	allKeys := m.availableKeys
-	if m.keysInFlight == m.currentPath() && len(allKeys) == 0 {
-		return labelStyle.Render("Loading keys...")
+	if m.keys.loadingFor(m.currentPath()) {
+		return []string{labelStyle.Render("Loading keys...")}
 	}
-	keys := filterKeysByPrefix(allKeys, m.acContext.Incomplete)
+	keys := m.keys.filtered(m.acContext.Incomplete)
 	if len(keys) == 0 {
 		if m.acContext.Incomplete != "" {
-			return labelStyle.Render("No matches")
+			return []string{labelStyle.Render("No matches")}
 		}
-		return labelStyle.Render("No keys")
+		return []string{labelStyle.Render("No keys")}
 	}
 
 	var lines []string
@@ -232,22 +272,7 @@ func (m Model) renderSuggestions() string {
 			break
 		}
 	}
-	return strings.Join(lines, "\n")
-}
-
-func filterKeysByPrefix(keys []string, incomplete string) []string {
-	if incomplete == "" || len(keys) == 0 {
-		return keys
-	}
-
-	prefix := strings.ToLower(incomplete)
-	matches := make([]string, 0, len(keys))
-	for _, key := range keys {
-		if strings.HasPrefix(strings.ToLower(key), prefix) {
-			matches = append(matches, key)
-		}
-	}
-	return matches
+	return lines
 }
 
 func (m Model) currentPath() string {
@@ -303,7 +328,7 @@ func (m Model) overlayHistory(base string) string {
 
 func (m Model) compactHelpText() string {
 	items := []string{
-		"?: help",
+		"f1: help",
 		"tab: autocomplete",
 		"enter: quit",
 		"shift+up/down: fast scroll",
@@ -355,7 +380,7 @@ func (m Model) renderHelpContent() string {
 
 	rows := []string{
 		titleStyle.Render("Keyboard Shortcuts"),
-		helpStyle.Render("esc or ?: close"),
+		helpStyle.Render("esc, ? or F1: close"),
 		"",
 		labelStyle.Render("Navigation"),
 		m.helpRow("Up/Down", "Scroll output"),
@@ -375,6 +400,7 @@ func (m Model) renderHelpContent() string {
 		m.helpRow("Ctrl+Y", "Copy output"),
 		m.helpRow("Ctrl+F", "Copy filter"),
 		m.helpRow("Ctrl+H", "Query history"),
+		m.helpRow("F1 / Ctrl+/", "Toggle this help"),
 		m.helpRow("Esc/Ctrl+C", "Quit"),
 	}
 
@@ -392,7 +418,12 @@ func placeOverlay(base, overlay string, width, height int) string {
 	baseLines := strings.Split(base, "\n")
 
 	overlayHeight := len(overlayLines)
-	overlayWidth := lipgloss.Width(overlay)
+	overlayWidth := 0
+	for _, l := range overlayLines {
+		if w := ansi.StringWidth(l); w > overlayWidth {
+			overlayWidth = w
+		}
+	}
 
 	startY := (height - overlayHeight) / 2
 	startX := (width - overlayWidth) / 2
@@ -410,130 +441,26 @@ func placeOverlay(base, overlay string, width, height int) string {
 			break
 		}
 		baseLine := baseLines[y]
-		// Pad base line if needed
-		if len(baseLine) < startX {
-			baseLine += strings.Repeat(" ", startX-len(baseLine))
+		left := ansi.Truncate(baseLine, startX, "")
+		leftW := ansi.StringWidth(left)
+		if leftW < startX {
+			left += strings.Repeat(" ", startX-leftW)
 		}
-		// Replace portion with overlay
-		newLine := baseLine[:startX] + line
-		if len(baseLine) > startX+lipgloss.Width(line) {
-			newLine += baseLine[startX+lipgloss.Width(line):]
+		lineW := ansi.StringWidth(line)
+		right := ansi.TruncateLeft(baseLine, startX+lineW, "")
+
+		var sb strings.Builder
+		if strings.Contains(left, "\x1b") {
+			left += ansiReset
 		}
-		baseLines[y] = newLine
+		sb.WriteString(left)
+		sb.WriteString(line)
+		if right != "" {
+			sb.WriteString(ansiReset)
+			sb.WriteString(right)
+		}
+		baseLines[y] = sb.String()
 	}
 
 	return strings.Join(baseLines, "\n")
-}
-
-func clipRawLine(line string, xOffset, maxWidth int) (string, bool, bool) {
-	if maxWidth <= 0 {
-		return "", xOffset > 0, len(line) > 0
-	}
-
-	runes := []rune(line)
-	if len(runes) == 0 {
-		return "", xOffset > 0, false
-	}
-
-	if xOffset < 0 {
-		xOffset = 0
-	}
-
-	totalWidth := 0
-	for _, r := range runes {
-		w := runewidth.RuneWidth(r)
-		if w < 1 {
-			w = 1
-		}
-		totalWidth += w
-	}
-
-	if xOffset > totalWidth {
-		xOffset = totalWidth
-	}
-
-	startIdx := len(runes)
-	widthSoFar := 0
-	for i, r := range runes {
-		w := runewidth.RuneWidth(r)
-		if w < 1 {
-			w = 1
-		}
-		if widthSoFar+w > xOffset {
-			startIdx = i
-			break
-		}
-		widthSoFar += w
-	}
-
-	endIdx := startIdx
-	visibleWidth := 0
-	for i := startIdx; i < len(runes); i++ {
-		w := runewidth.RuneWidth(runes[i])
-		if w < 1 {
-			w = 1
-		}
-		if visibleWidth+w > maxWidth {
-			break
-		}
-		visibleWidth += w
-		endIdx = i + 1
-	}
-
-	leftCut := xOffset > 0
-	rightCut := (xOffset + visibleWidth) < totalWidth
-	return string(runes[startIdx:endIdx]), leftCut, rightCut
-}
-
-func withEllipsis(line string, maxWidth int, leftCut, rightCut bool) string {
-	if maxWidth <= 0 {
-		return ""
-	}
-
-	if !leftCut && !rightCut {
-		return line
-	}
-
-	runes := []rune(line)
-	runes = trimToDisplayWidth(runes, maxWidth)
-
-	if leftCut && rightCut && maxWidth >= 2 {
-		runes = trimToDisplayWidth(runes, maxWidth-2)
-		return "…" + string(runes) + "…"
-	}
-
-	if leftCut {
-		if maxWidth == 1 {
-			return "…"
-		}
-		runes = trimToDisplayWidth(runes, maxWidth-1)
-		return "…" + string(runes)
-	}
-
-	// rightCut only
-	if maxWidth == 1 {
-		return "…"
-	}
-	runes = trimToDisplayWidth(runes, maxWidth-1)
-	return string(runes) + "…"
-}
-
-func trimToDisplayWidth(runes []rune, maxWidth int) []rune {
-	if maxWidth <= 0 || len(runes) == 0 {
-		return []rune{}
-	}
-	width := 0
-	end := 0
-	for i, r := range runes {
-		w := runewidth.RuneWidth(r)
-		if w < 1 {
-			w = 1
-		}
-		if width+w > maxWidth {
-			break
-		}
-		width += w
-		end = i + 1
-	}
-	return runes[:end]
 }
