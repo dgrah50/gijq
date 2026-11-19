@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/dayangraham/gijq/internal/autocomplete"
 	"github.com/dayangraham/gijq/internal/clipboard"
@@ -60,12 +61,66 @@ func run() error {
 		Telemetry: telemetryEnabled,
 	})
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	// The TUI must never write to a piped stdout (the result goes there) and
+	// must read keys from the terminal when stdin carries the JSON. Alt screen
+	// is declared on the model's View.
+	opts, closeTTY, err := ttyOptions()
+	if err != nil {
+		return err
+	}
+	defer closeTTY()
+
+	p := tea.NewProgram(model, opts...)
 	finalModel, err := p.Run()
 	if telemetryEnabled {
 		printTelemetrySummary(finalModel, os.Stderr)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// Print only after Run returns so the alt screen is already torn down.
+	if out, ok := finalOutput(finalModel); ok {
+		if _, err := io.WriteString(os.Stdout, out); err != nil {
+			return fmt.Errorf("failed to write output: %w", err)
+		}
+	}
+	return nil
+}
+
+// ttyOptions redirects Bubble Tea's I/O to the controlling terminal when
+// stdin or stdout is not a terminal.
+func ttyOptions() ([]tea.ProgramOption, func(), error) {
+	inTTY := term.IsTerminal(os.Stdin.Fd())
+	outTTY := term.IsTerminal(os.Stdout.Fd())
+	if inTTY && outTTY {
+		return nil, func() {}, nil
+	}
+	ttyIn, ttyOut, err := tea.OpenTTY()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open terminal: %w", err)
+	}
+	closer := func() {
+		_ = ttyIn.Close()
+		_ = ttyOut.Close()
+	}
+	var opts []tea.ProgramOption
+	if !inTTY {
+		opts = append(opts, tea.WithInput(ttyIn))
+	}
+	if !outTTY {
+		opts = append(opts, tea.WithOutput(ttyOut))
+	}
+	return opts, closer, nil
+}
+
+func finalOutput(model tea.Model) (string, bool) {
+	switch m := model.(type) {
+	case ui.Model:
+		return m.Output()
+	case *ui.Model:
+		return m.Output()
+	}
+	return "", false
 }
 
 func loadInput() ([]byte, string, string, error) {

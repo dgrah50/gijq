@@ -3,33 +3,32 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
 	"strings"
-	"time"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // Update handles messages
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		if !m.ready {
-			m.output = newViewport(m.width, m.contentHeight())
-			m.ready = true
+		m.ready = true
+		// Keep the footer filter line within the terminal width
+		// ("filter: " label + "> " prompt + cursor cell).
+		if w := m.width - len("filter: ") - 4; w >= 1 {
+			m.filter.SetWidth(w)
 		} else {
-			m.output.Width = m.outputContentWidth()
-			m.output.Height = m.contentHeight()
+			m.filter.SetWidth(1)
 		}
+		m.helpLine = m.compactHelpText()
 		m.clampOutputXOffset()
+		m.clampYOffset()
 		return m, nil
 
 	case resultMsg:
@@ -43,21 +42,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.result = msg.result
-		if msg.result.Error != nil {
-			m.lines = strings.Split(msg.result.Error.Error(), "\n")
-		} else {
-			m.lines = strings.Split(msg.result.Raw, "\n")
+		m.lines = msg.lines
+		if len(m.lines) == 0 {
+			m.lines = []string{""}
 		}
-		m.maxLineWidth = maxDisplayLineWidth(m.lines)
+		m.maxLineWidth = msg.maxLineWidth
+		m.hl.resetWith(msg.checkpoints)
 		m.clampOutputXOffset()
-		if m.ready {
-			// Set raw content for viewport scrolling calculation
-			if msg.result.Error != nil {
-				m.output.SetContent(msg.result.Error.Error())
-			} else {
-				m.output.SetContent(msg.result.Raw)
-			}
-		}
+		m.clampYOffset()
 		return m, nil
 
 	case executeQueryMsg:
@@ -68,29 +60,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.startExecute(msg.seq)
 
 	case keysMsg:
-		if m.keysInFlight == msg.path {
-			m.keysInFlight = ""
-		}
-		if msg.path != m.currentPath() {
-			return m, nil
-		}
-		m.keysPath = msg.path
-		if msg.err != nil {
-			m.availableKeys = nil
-			return m, nil
-		}
-		m.availableKeys = msg.keys
+		m.keys.receive(msg.path, msg.keys, msg.err)
 		return m, nil
 
 	case statusClearMsg:
-		m.status = ""
+		if msg.seq == m.statusSeq {
+			m.status = ""
+		}
 		return m, nil
 	}
 
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// syncContext re-derives the autocomplete context from the filter and
+// fetches keys for the resulting path if needed.
+func (m *Model) syncContext() tea.Cmd {
+	m.acContext = m.autocomplete.ParseContext(m.filter.Value())
+	return m.maybeFetchKeys()
+}
+
+// leaveToNormal exits any non-normal mode, drops mode data and re-syncs the
+// keys pane with the filter.
+func (m *Model) leaveToNormal() tea.Cmd {
+	m.mode = ModeNormal
+	m.suggestions = nil
+	m.selectedIdx = 0
+	return m.syncContext()
+}
+
+// enterMode switches to help or history, discarding autocomplete data.
+func (m *Model) enterMode(mode Mode) {
+	m.mode = mode
+	m.suggestions = nil
+	m.selectedIdx = 0
+}
+
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	// Global keys
@@ -98,19 +104,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 
-	case "?", "ctrl+/":
+	case "f1", "ctrl+/", "ctrl+_":
 		if m.mode == ModeHelp {
-			m.mode = ModeNormal
-		} else {
-			m.mode = ModeHelp
+			return m, m.leaveToNormal()
 		}
+		m.enterMode(ModeHelp)
 		return m, nil
 
 	case "esc":
 		if m.mode != ModeNormal {
-			m.mode = ModeNormal
-			m.suggestions = nil
-			return m, nil
+			return m, m.leaveToNormal()
 		}
 		return m, tea.Quit
 
@@ -121,7 +124,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.copyFilter()
 
 	case "ctrl+h":
-		m.mode = ModeHistory
+		m.enterMode(ModeHistory)
 		m.historyItems = m.history.Get(m.filepath)
 		m.historyIdx = 0
 		return m, nil
@@ -142,14 +145,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	switch key {
 	case "enter":
-		// Output result and quit
+		// Record the result and quit; main prints it after the TUI has
+		// released the terminal.
 		if m.result.Error == nil && m.result.Raw != "" {
-			fmt.Fprint(os.Stdout, m.result.Raw)
+			m.output = m.result.Raw
+			m.confirmed = true
 			// Save to history
 			m.history.Add(m.filepath, m.filter.Value())
 			m.history.Save()
@@ -158,7 +163,8 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		m.mode = ModeAutocomplete
-		filter := m.filter.Value()
+		original := m.filter.Value()
+		filter := original
 
 		// If filter ends with ], append . to drill into sub-keys
 		if strings.HasSuffix(filter, "]") {
@@ -179,22 +185,25 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedIdx = 0
 		}
 
+		if m.filter.Value() != original {
+			return m, tea.Batch(m.queueExecute(), m.maybeFetchKeys())
+		}
 		return m, nil
 
 	case "up":
-		m.output.LineUp(1)
+		m.scrollY(-1)
 		return m, nil
 
 	case "down":
-		m.output.LineDown(1)
+		m.scrollY(1)
 		return m, nil
 
 	case "shift+up":
-		m.output.LineUp(8)
+		m.scrollY(-8)
 		return m, nil
 
 	case "shift+down":
-		m.output.LineDown(8)
+		m.scrollY(8)
 		return m, nil
 
 	case "shift+left":
@@ -214,11 +223,11 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "pgup":
-		m.output.HalfViewUp()
+		m.scrollY(-m.halfPage())
 		return m, nil
 
 	case "pgdown":
-		m.output.HalfViewDown()
+		m.scrollY(m.halfPage())
 		return m, nil
 
 	case "alt+left", "alt+b", "ctrl+left":
@@ -253,7 +262,7 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m Model) handleAutocompleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleAutocompleteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	switch key {
@@ -279,20 +288,19 @@ func (m Model) handleAutocompleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter.SetValue(newFilter)
 			m.filter.SetCursor(len(newFilter))
 		}
-		m.mode = ModeNormal
-		m.suggestions = nil
-		m.acContext = m.autocomplete.ParseContext(m.filter.Value())
-		return m, tea.Batch(m.executeNow(), m.maybeFetchKeys())
+		fetch := m.leaveToNormal()
+		return m, tea.Batch(m.executeNow(), fetch)
 
 	default:
 		// Any other key exits autocomplete and processes normally
 		m.mode = ModeNormal
 		m.suggestions = nil
+		m.selectedIdx = 0
 		return m.handleNormalKey(msg)
 	}
 }
 
-func (m Model) handleHistoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleHistoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	switch key {
@@ -316,21 +324,20 @@ func (m Model) handleHistoryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter.SetValue(m.historyItems[m.historyIdx])
 			m.filter.SetCursor(len(m.historyItems[m.historyIdx]))
 		}
-		m.mode = ModeNormal
-		m.acContext = m.autocomplete.ParseContext(m.filter.Value())
-		return m, tea.Batch(m.executeNow(), m.maybeFetchKeys())
+		fetch := m.leaveToNormal()
+		return m, tea.Batch(m.executeNow(), fetch)
 
 	default:
+		// Leave history and process the key as a normal key.
 		m.mode = ModeNormal
-		return m, nil
+		return m.handleNormalKey(msg)
 	}
 }
 
-func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "enter", " ":
-		m.mode = ModeNormal
-		return m, nil
+	case "?", "enter", "space":
+		return m, m.leaveToNormal()
 	default:
 		return m, nil
 	}
@@ -338,15 +345,12 @@ func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) copyOutput() (tea.Model, tea.Cmd) {
 	if m.result.Raw == "" {
-		m.status = "Nothing to copy"
-		return m, clearStatusAfter(3 * time.Second)
+		return m, m.setStatus("Nothing to copy")
 	}
 	if err := m.clipboard.Copy(m.result.Raw); err != nil {
-		m.status = "Copy failed: " + err.Error()
-	} else {
-		m.status = "Copied output to clipboard"
+		return m, m.setStatus("Copy failed: " + err.Error())
 	}
-	return m, clearStatusAfter(3 * time.Second)
+	return m, m.setStatus("Copied output to clipboard")
 }
 
 func (m *Model) moveCursorToPrevWord() {
@@ -464,28 +468,21 @@ func (m *Model) maybeFetchKeys() tea.Cmd {
 	if path == "" {
 		path = "."
 	}
-	if path == m.keysPath || path == m.keysInFlight {
+	if !m.keys.request(path) {
 		return nil
 	}
-	if path != m.keysPath {
-		m.availableKeys = nil
-	}
-	m.keysInFlight = path
 	return m.fetchKeys(path)
 }
 
 func (m Model) copyFilter() (tea.Model, tea.Cmd) {
 	filter := m.filter.Value()
 	if filter == "" {
-		m.status = "Nothing to copy"
-		return m, clearStatusAfter(3 * time.Second)
+		return m, m.setStatus("Nothing to copy")
 	}
 	if err := m.clipboard.Copy(filter); err != nil {
-		m.status = "Copy failed: " + err.Error()
-	} else {
-		m.status = "Copied filter to clipboard"
+		return m, m.setStatus("Copy failed: " + err.Error())
 	}
-	return m, clearStatusAfter(3 * time.Second)
+	return m, m.setStatus("Copied filter to clipboard")
 }
 
 func (m Model) contentHeight() int {
@@ -509,10 +506,33 @@ func (m Model) suggestWidth() int {
 	return w
 }
 
-func newViewport(width, height int) viewport.Model {
-	vp := viewport.New(width-30, height) // Account for suggestion panel + borders
-	vp.SetContent("")
-	return vp
+func (m Model) halfPage() int {
+	if h := m.contentHeight() / 2; h > 1 {
+		return h
+	}
+	return 1
+}
+
+func (m Model) maxYOffset() int {
+	n := len(m.lines) - m.contentHeight()
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func (m *Model) clampYOffset() {
+	if max := m.maxYOffset(); m.yOffset > max {
+		m.yOffset = max
+	}
+	if m.yOffset < 0 {
+		m.yOffset = 0
+	}
+}
+
+func (m *Model) scrollY(delta int) {
+	m.yOffset += delta
+	m.clampYOffset()
 }
 
 func (m *Model) scrollHorizontal(delta int) {

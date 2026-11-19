@@ -18,9 +18,12 @@ func TestFilterKeysByPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := filterKeysByPrefix(keys, tt.incomplete)
+			var ks keysState
+			ks.request(".")
+			ks.receive(".", keys, nil)
+			got := ks.filtered(tt.incomplete)
 			if !equalStringSlices(got, tt.want) {
-				t.Fatalf("filterKeysByPrefix(%q) = %v, want %v", tt.incomplete, got, tt.want)
+				t.Fatalf("keysState.filtered(%q) = %v, want %v", tt.incomplete, got, tt.want)
 			}
 		})
 	}
