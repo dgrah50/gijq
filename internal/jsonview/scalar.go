@@ -48,8 +48,11 @@ func appendString(dst []byte, s string) []byte {
 		}
 		c, size := utf8.DecodeRuneInString(s[i:])
 		if c == utf8.RuneError && size == 1 {
+			// Invalid UTF-8: escaped as \ufffd like gojq (and encoding/json
+			// before Go 1.27, which emits the literal rune instead). Fixed here
+			// so output doesn't depend on the toolchain.
 			dst = append(dst, s[start:i]...)
-			dst = append(dst, `�`...)
+			dst = append(dst, `\ufffd`...)
 			i += size
 			start = i
 			continue
