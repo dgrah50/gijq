@@ -42,6 +42,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.result = msg.result
+		m.resultFilter = msg.filter
 		m.lines = msg.lines
 		if len(m.lines) == 0 {
 			m.lines = []string{""}
@@ -152,11 +153,23 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		// Record the result and quit; main prints it after the TUI has
 		// released the terminal.
-		if m.result.Error == nil && m.result.Raw != "" {
-			m.output = m.result.Raw
+		filter := m.filter.Value()
+		result := m.result
+		if m.queryRunning || m.resultFilter != filter {
+			// The shown result is stale (debounce pending or query still
+			// running): evaluate the current filter before quitting so we
+			// never print output for a different filter.
+			if m.queryCancel != nil {
+				m.queryCancel()
+				m.queryCancel = nil
+			}
+			result = m.jq.Execute(filter)
+		}
+		if result.Error == nil && result.Raw != "" {
+			m.output = result.Raw
 			m.confirmed = true
 			// Save to history
-			m.history.Add(m.filepath, m.filter.Value())
+			m.history.Add(m.filepath, filter)
 			m.history.Save()
 		}
 		return m, tea.Quit

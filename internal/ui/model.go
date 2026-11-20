@@ -37,7 +37,9 @@ type Model struct {
 	// Input/Output
 	filter textinput.Model
 	result jq.Result
-	lines  []string
+	// resultFilter is the filter that produced result.
+	resultFilter string
+	lines        []string
 	// yOffset is the index of the first visible output line.
 	yOffset int
 	// Output geometry state
@@ -142,6 +144,7 @@ func (m Model) Init() tea.Cmd {
 type resultMsg struct {
 	seq    int
 	result jq.Result
+	filter string // filter that produced result
 	// Post-processed off the UI goroutine.
 	lines        []string
 	maxLineWidth int
@@ -218,7 +221,7 @@ func (m *Model) startExecute(seq int) tea.Cmd {
 		if ctx.Err() == nil {
 			cps = prebuildCheckpoints(lines)
 		}
-		return resultMsg{seq: seq, result: result, lines: lines, maxLineWidth: maxW, checkpoints: cps}
+		return resultMsg{seq: seq, result: result, filter: filter, lines: lines, maxLineWidth: maxW, checkpoints: cps}
 	}
 }
 

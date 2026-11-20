@@ -96,7 +96,7 @@ func deliver(t testing.TB, m Model, result jq.Result) Model {
 	t.Helper()
 	m.activeQuerySeq = m.querySeq
 	lines, w := processResult(result)
-	m, _ = send(m, resultMsg{seq: m.querySeq, result: result, lines: lines, maxLineWidth: w})
+	m, _ = send(m, resultMsg{seq: m.querySeq, result: result, filter: m.filter.Value(), lines: lines, maxLineWidth: w})
 	return m
 }
 
@@ -354,5 +354,34 @@ func TestEnterRecordsOutputAndQuitsWithoutWriting(t *testing.T) {
 	}
 	if _, isQuit := cmd().(tea.QuitMsg); !isQuit {
 		t.Fatal("expected quit")
+	}
+}
+
+func TestEnterWithStaleResultEvaluatesCurrentFilter(t *testing.T) {
+	m := newTestModel(t, 100, 30)
+	// Result shown is for "." but the user has since typed a new filter
+	// whose query hasn't come back yet (debounce pending / still running).
+	m = deliver(t, m, jq.Result{Raw: "STALE"})
+	m.filter.SetValue(".items[0].name")
+	m.queryRunning = true
+
+	next, cmd := m.Update(key("enter"))
+	got := next.(Model)
+	out, ok := got.Output()
+	if !ok || out != `"x"` {
+		t.Fatalf("Output() = %q, %v; want current filter's result", out, ok)
+	}
+	if h := got.history.Get("/t.json"); len(h) == 0 || h[0] != ".items[0].name" {
+		t.Fatalf("history = %v", h)
+	}
+	if _, isQuit := cmd().(tea.QuitMsg); !isQuit {
+		t.Fatal("expected quit")
+	}
+
+	// Same filter, not running: the shown result is used as-is (no re-run).
+	m = deliver(t, newTestModel(t, 100, 30), jq.Result{Raw: "SHOWN"})
+	next, _ = m.Update(key("enter"))
+	if out, _ := next.(Model).Output(); out != "SHOWN" {
+		t.Fatalf("fresh result should be used, got %q", out)
 	}
 }
