@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/itchyny/gojq"
 	"github.com/mattn/go-runewidth"
@@ -43,12 +44,37 @@ func referenceFormat(results []any) string {
 // ref is the reference formatter applied to a tree normalised the way the
 // new printer (and gojq) treat non-finite floats: NaN -> null, +-Inf ->
 // +-MaxFloat64. Everything else must be byte-identical to encoding/json.
+// invalidMark stands in for invalid UTF-8 bytes while the reference encodes,
+// then becomes the escape jsonview emits. encoding/json's own handling of
+// invalid UTF-8 changed in Go 1.27 (\ufffd escape -> literal rune), so the
+// reference must not depend on it. The generators never produce this rune.
+const invalidMark = "\uE000"
+
 func ref(results []any) string {
 	out := make([]any, len(results))
 	for i, r := range results {
 		out[i] = normalize(r)
 	}
-	return referenceFormat(out)
+	return strings.ReplaceAll(referenceFormat(out), invalidMark, `\ufffd`)
+}
+
+// markInvalid replaces each invalid UTF-8 byte with invalidMark, exactly as
+// encoding/json would substitute one replacement per invalid byte.
+func markInvalid(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			b.WriteString(invalidMark)
+		} else {
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
 }
 
 func normalize(v any) any {
@@ -73,9 +99,11 @@ func normalize(v any) any {
 		}
 		o := make(map[string]any, len(x))
 		for k, e := range x {
-			o[k] = normalize(e)
+			o[markInvalid(k)] = normalize(e)
 		}
 		return o
+	case string:
+		return markInvalid(x)
 	}
 	return v
 }
