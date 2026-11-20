@@ -51,8 +51,8 @@ func (m Model) renderHeader() string {
 		status = statusStyle.Render(m.fitStatus(m.status))
 	} else if m.query.running() {
 		status = helpStyle.Render("Running...")
-	} else if m.result.Error != nil {
-		status = errorStyle.Render(m.fitStatus("Error: " + m.result.Error.Error()))
+	} else if m.result.hasError() {
+		status = errorStyle.Render(m.fitStatus("Error: " + m.result.err.Error()))
 	}
 
 	return fmt.Sprintf("%s  %s\n%s\n", title, help, status)
@@ -130,28 +130,20 @@ func (m Model) renderContent() string {
 		height = 0
 	}
 
-	lines := m.lines
-	if len(lines) == 0 {
-		lines = []string{""}
-	}
-
-	startLine := m.yOffset
-	if startLine > len(lines) {
-		startLine = len(lines)
-	}
-	endLine := startLine + height
-	if endLine > len(lines) {
-		endLine = len(lines)
-	}
-	visibleLines := lines[startLine:endLine]
+	// Only the visible lines are generated (and memoised across frames).
+	win := m.result.window(m.yOffset, height)
 
 	// Render each output row, already padded to outputWidth.
 	rows := make([]string, 0, height)
 	errPre, errSu := errorWrap()
-	isErr := m.result.Error != nil
+	isErr := m.result.hasError()
 	var sb strings.Builder
-	for i, rawLine := range visibleLines {
-		text, w, _, _ := highlightWindow(rawLine, m.outputXOffset, outputWidth, !isErr, m.checkpoints[startLine+i])
+	for i, rawLine := range win.lines {
+		var cps []hlCheckpoint
+		if m.outputXOffset > 0 && !isErr {
+			cps = win.checkpoints(i)
+		}
+		text, w, _, _ := highlightWindow(rawLine, m.outputXOffset, outputWidth, !isErr, cps)
 
 		sb.Reset()
 		if isErr && text != "" {
@@ -286,7 +278,15 @@ func (m Model) renderFooter() string {
 		scrollLabel = labelStyle.Render(fmt.Sprintf(" x:%d/%d", m.outputXOffset, m.maxHorizontalOffset()))
 	}
 
-	return fmt.Sprintf("\n%s%s\n%s%s%s", filterLabel, filter, fileLabel, file, scrollLabel)
+	summary := ""
+	if s := m.result.summary(); s != "" {
+		summary = labelStyle.Render("  " + s)
+	}
+	info := fileLabel + file + scrollLabel + summary
+	if m.width > 0 {
+		info = ansi.Truncate(info, m.width, "…")
+	}
+	return fmt.Sprintf("\n%s%s\n%s", filterLabel, filter, info)
 }
 
 func (m Model) overlayHistory(base string) string {

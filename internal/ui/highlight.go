@@ -214,23 +214,6 @@ func buildCheckpoints(line string) []hlCheckpoint {
 	return cps
 }
 
-// prebuildCheckpoints computes checkpoints for every long line, keyed by line
-// index. It is CPU heavy for large minified outputs and must run off the UI
-// goroutine. Lines without checkpoints are simply lexed from their start.
-func prebuildCheckpoints(lines []string) map[int][]hlCheckpoint {
-	var out map[int][]hlCheckpoint
-	for i, line := range lines {
-		if len(line) < hlMinLong {
-			continue
-		}
-		if out == nil {
-			out = make(map[int][]hlCheckpoint)
-		}
-		out[i] = buildCheckpoints(line)
-	}
-	return out
-}
-
 // highlightWindow renders the part of line visible in a window of width
 // columns starting at display column xOffset, including "…" markers for cut
 // sides. If color is false the output is plain text. cps (optional, sorted)
