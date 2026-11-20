@@ -191,9 +191,8 @@ type hlCheckpoint struct {
 }
 
 const (
-	hlStride   = 4096 // bytes between checkpoints
-	hlMinLong  = 4096 // lines at least this long get checkpoints
-	hlMaxLines = 64   // bound on cached long lines
+	hlStride  = 4096 // bytes between checkpoints
+	hlMinLong = 4096 // lines at least this long get checkpoints
 )
 
 // buildCheckpoints lexes line once and records a checkpoint about every
@@ -215,8 +214,9 @@ func buildCheckpoints(line string) []hlCheckpoint {
 	return cps
 }
 
-// prebuildCheckpoints computes checkpoints for every long line. It is CPU
-// heavy for large minified outputs and must run off the UI goroutine.
+// prebuildCheckpoints computes checkpoints for every long line, keyed by line
+// index. It is CPU heavy for large minified outputs and must run off the UI
+// goroutine. Lines without checkpoints are simply lexed from their start.
 func prebuildCheckpoints(lines []string) map[int][]hlCheckpoint {
 	var out map[int][]hlCheckpoint
 	for i, line := range lines {
@@ -229,55 +229,6 @@ func prebuildCheckpoints(lines []string) map[int][]hlCheckpoint {
 		out[i] = buildCheckpoints(line)
 	}
 	return out
-}
-
-// highlightCache holds checkpoints for long lines, keyed by line index:
-// pre is built in the background when a result arrives (never evicted);
-// cps holds lazily built fallbacks. It is reset whenever a new result is
-// accepted.
-type highlightCache struct {
-	pre map[int][]hlCheckpoint
-	cps map[int][]hlCheckpoint
-}
-
-func newHighlightCache() *highlightCache {
-	return &highlightCache{cps: make(map[int][]hlCheckpoint)}
-}
-
-func (c *highlightCache) reset() {
-	if c == nil {
-		return
-	}
-	c.pre = nil
-	clear(c.cps)
-}
-
-// resetWith resets the cache and seeds it with prebuilt checkpoints.
-func (c *highlightCache) resetWith(pre map[int][]hlCheckpoint) {
-	if c == nil {
-		return
-	}
-	c.reset()
-	c.pre = pre
-}
-
-// forLine returns checkpoints for line idx, or nil for short lines.
-func (c *highlightCache) forLine(idx int, line string) []hlCheckpoint {
-	if c == nil || len(line) < hlMinLong {
-		return nil
-	}
-	if cps, ok := c.pre[idx]; ok {
-		return cps
-	}
-	if cps, ok := c.cps[idx]; ok {
-		return cps
-	}
-	if len(c.cps) >= hlMaxLines {
-		clear(c.cps)
-	}
-	cps := buildCheckpoints(line)
-	c.cps[idx] = cps
-	return cps
 }
 
 // highlightWindow renders the part of line visible in a window of width

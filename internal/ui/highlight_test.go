@@ -229,23 +229,14 @@ func TestCheckpointsMatchFullLex(t *testing.T) {
 	}
 }
 
-func TestHighlightCacheLongLinesOnly(t *testing.T) {
-	c := newHighlightCache()
-	if c.forLine(0, "short") != nil || len(c.cps) != 0 {
-		t.Fatal("short lines must not be cached")
-	}
+func TestPrebuildCheckpointsLongLinesOnly(t *testing.T) {
 	long := strings.Repeat("a", 3*hlStride)
-	if len(c.forLine(3, long)) == 0 || len(c.cps) != 1 {
-		t.Fatal("long line not cached")
+	cps := prebuildCheckpoints([]string{"short", "", long})
+	if len(cps) != 1 || len(cps[2]) == 0 {
+		t.Fatalf("want checkpoints only for line 2, got %v", cps)
 	}
-	c.reset()
-	if len(c.cps) != 0 {
-		t.Fatal("reset did not clear")
-	}
-	var nilCache *highlightCache
-	nilCache.reset()
-	if nilCache.forLine(0, long) != nil {
-		t.Fatal("nil cache must be inert")
+	if prebuildCheckpoints([]string{"a", "b"}) != nil {
+		t.Fatal("no long lines must yield a nil map")
 	}
 }
 
@@ -306,9 +297,7 @@ func TestPrebuiltCheckpointsMatchLazy(t *testing.T) {
 	if _, ok := pre[0]; ok {
 		t.Fatalf("short line should have no checkpoints")
 	}
-	c := newHighlightCache()
-	c.resetWith(pre)
-	got := c.forLine(1, long)
+	got := pre[1]
 	want := buildCheckpoints(long)
 	if len(got) != len(want) || len(got) == 0 {
 		t.Fatalf("checkpoints len = %d, want %d (non-zero)", len(got), len(want))
@@ -319,9 +308,5 @@ func TestPrebuiltCheckpointsMatchLazy(t *testing.T) {
 		if a != b {
 			t.Fatalf("offset %d: prebuilt render differs from lex-from-0", x)
 		}
-	}
-	c.reset()
-	if c.pre != nil {
-		t.Fatalf("reset should drop prebuilt checkpoints")
 	}
 }

@@ -24,9 +24,20 @@ const (
 	ModeHelp
 )
 
-const queryDebounce = 30 * time.Millisecond
+const (
+	queryDebounce = 30 * time.Millisecond
+	statusTimeout = 3 * time.Second
+)
 
-// Model is the Bubble Tea model
+// Model is the Bubble Tea model.
+//
+// Invariants (maintained by the code in keys.go):
+//   - Autocomplete context and the keys-pane path are always derived from the
+//     filter text (see acContext/currentPath); they are never stored.
+//   - Any key that changes the filter text queues a debounced query and a
+//     keys fetch (see handleKey). Individual handlers never do this.
+//   - Mode-specific data (suggestions, history list) only exists while in
+//     that mode; every mode change goes through setMode.
 type Model struct {
 	// Services
 	jq           *jq.Service
@@ -34,58 +45,107 @@ type Model struct {
 	history      *history.Store
 	clipboard    *clipboard.Service
 
-	// Input/Output
-	filter textinput.Model
-	result jq.Result
-	// resultFilter is the filter that produced result.
-	resultFilter string
+	// Filter input and the last accepted result.
+	filter       textinput.Model
+	query        queryState
+	result       jq.Result
+	resultFilter string // filter that produced result
 	lines        []string
-	// yOffset is the index of the first visible output line.
-	yOffset int
-	// Output geometry state
+	maxLineWidth int
+	// checkpoints lets the highlighter resume lexing deep inside long lines.
+	// Built off the UI goroutine with each result; read-only afterwards.
+	checkpoints map[int][]hlCheckpoint
+
+	// Scroll position of the output pane.
+	yOffset       int
 	outputXOffset int
-	maxLineWidth  int
 
-	// Autocomplete state
-	suggestions []string
-	selectedIdx int
-	acContext   autocomplete.Context
-	keys        keysState
+	// Mode and mode-specific data (see setMode).
+	mode         Mode
+	suggestions  []string // ModeAutocomplete only
+	selectedIdx  int      // ModeAutocomplete only
+	historyItems []string // ModeHistory only
+	historyIdx   int      // ModeHistory only
 
-	// History state
-	historyItems []string
-	historyIdx   int
+	// Keys pane data for the current path.
+	keys keysState
 
-	// Query execution state
-	querySeq       int
-	activeQuerySeq int
-	queryCancel    context.CancelFunc
-	queryRunning   bool
-
-	// Render cache
-	hl        *highlightCache
-	telemetry *latencyTelemetry
-
-	// UI state
-	mode      Mode
-	filename  string
-	filepath  string
+	// Transient status line; only the timer of the latest status clears it.
 	status    string
 	statusSeq int
-	helpLine  string
-	width     int
-	height    int
-	ready     bool
 
-	// Output printed to stdout by the caller after the program exits.
-	output    string
-	confirmed bool
+	// Layout
+	width    int
+	height   int
+	ready    bool   // a WindowSizeMsg has been received
+	helpLine string // header help text, recomputed on resize
+
+	filename  string
+	filepath  string
+	telemetry *latencyTelemetry
+
+	// quitting is set once the program has been told to quit; no further
+	// work is started after that.
+	quitting bool
+	// output is printed to stdout by the caller after the program exits.
+	output string
 }
 
-// Output returns the text to print to stdout after the TUI exits and whether
-// the user confirmed it with Enter.
+// queryState tracks jq evaluations of the filter. Every evaluation request
+// gets a sequence number. The lifecycle is:
+//
+//	idle --request--> debouncing --dispatch--> running --finish--> idle
+//
+// A newer request supersedes older ones: their debounce ticks are dropped and
+// their results are ignored.
+type queryState struct {
+	latest int                // seq of the most recent request
+	active int                // seq of the most recently dispatched request
+	cancel context.CancelFunc // non-nil while active is running
+}
+
+// request returns the seq for a new evaluation that supersedes all others.
+func (q *queryState) request() int {
+	q.latest++
+	return q.latest
+}
+
+// isLatest reports whether seq is still the most recent request.
+func (q *queryState) isLatest(seq int) bool { return seq == q.latest }
+
+// dispatch marks seq as running, cancelling any evaluation still in flight,
+// and returns the context the evaluation must run under.
+func (q *queryState) dispatch(seq int) context.Context {
+	q.stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	q.active, q.cancel = seq, cancel
+	return ctx
+}
+
+// finish reports whether a result for seq should be accepted, and if so
+// marks the query idle.
+func (q *queryState) finish(seq int) bool {
+	if seq != q.active {
+		return false
+	}
+	q.stop()
+	return true
+}
+
+// stop cancels the running evaluation, if any.
+func (q *queryState) stop() {
+	if q.cancel != nil {
+		q.cancel()
+		q.cancel = nil
+	}
+}
+
+func (q queryState) running() bool { return q.cancel != nil }
+
+// Output returns the text to print to stdout after the TUI exits, and
+// whether there is any (the user confirmed a successful result with Enter).
 func (m Model) Output() (string, bool) {
-	return m.output, m.confirmed
+	return m.output, m.output != ""
 }
 
 // Config holds initialization options
@@ -109,7 +169,6 @@ func NewModel(
 	ti.CharLimit = 500
 	ti.SetWidth(50)
 	ti.SetValue(".")
-	initialCtx := acSvc.ParseContext(ti.Value())
 
 	m := Model{
 		jq:           jqSvc,
@@ -120,22 +179,20 @@ func NewModel(
 		filename:     cfg.Filename,
 		filepath:     cfg.Filepath,
 		mode:         ModeNormal,
-		acContext:    initialCtx,
-		querySeq:     1,
-		hl:           newHighlightCache(),
 		lines:        []string{""},
-		maxLineWidth: 0,
 		telemetry:    newLatencyTelemetry(cfg.Telemetry),
 	}
+	// Init dispatches these: the first query and the root keys.
+	m.query.request()
 	m.keys.request(m.currentPath())
 	return m
 }
 
-// Init initializes the model
+// Init starts the requests queued by NewModel.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		textinput.Blink,
-		func() tea.Msg { return executeQueryMsg{seq: m.querySeq} },
+		func() tea.Msg { return executeQueryMsg{seq: m.query.latest} },
 		m.fetchKeys(m.currentPath()),
 	)
 }
@@ -148,8 +205,7 @@ type resultMsg struct {
 	// Post-processed off the UI goroutine.
 	lines        []string
 	maxLineWidth int
-	// Highlight checkpoints for long lines, keyed by line index.
-	checkpoints map[int][]hlCheckpoint
+	checkpoints  map[int][]hlCheckpoint
 }
 
 type executeQueryMsg struct {
@@ -164,58 +220,77 @@ type keysMsg struct {
 
 type statusClearMsg struct{ seq int }
 
+// acContext is the autocomplete context of the current filter text.
+func (m Model) acContext() autocomplete.Context {
+	return m.autocomplete.ParseContext(m.filter.Value())
+}
+
+// currentPath is the jq path whose keys the keys pane shows.
+func (m Model) currentPath() string {
+	if p := m.acContext().Path; p != "" {
+		return p
+	}
+	return "."
+}
+
+// setMode switches mode and drops the data of every other mode.
+func (m *Model) setMode(mode Mode) {
+	m.mode = mode
+	m.suggestions, m.selectedIdx = nil, 0
+	m.historyItems, m.historyIdx = nil, 0
+}
+
+// setFilter replaces the filter text and moves the cursor to the end.
+func (m *Model) setFilter(value string) {
+	m.filter.SetValue(value)
+	m.filter.CursorEnd()
+}
+
 // setStatus shows a status message and returns the command that clears it.
-// Only the most recent status's timer can clear it.
 func (m *Model) setStatus(text string) tea.Cmd {
 	m.statusSeq++
 	m.status = text
 	seq := m.statusSeq
-	return tea.Tick(3*time.Second, func(time.Time) tea.Msg {
+	return tea.Tick(statusTimeout, func(time.Time) tea.Msg {
 		return statusClearMsg{seq: seq}
 	})
 }
 
-func (m Model) fetchKeys(path string) tea.Cmd {
-	if path == "" {
-		path = "."
+// fetchKeysIfNeeded starts a keys fetch when the current path changed.
+func (m *Model) fetchKeysIfNeeded() tea.Cmd {
+	path := m.currentPath()
+	if !m.keys.request(path) {
+		return nil
 	}
+	return m.fetchKeys(path)
+}
+
+func (m Model) fetchKeys(path string) tea.Cmd {
+	jqSvc := m.jq
 	return func() tea.Msg {
-		keys, err := m.jq.KeysAt(path)
+		keys, err := jqSvc.KeysAt(path)
 		return keysMsg{path: path, keys: keys, err: err}
 	}
 }
 
+// queueExecute requests an evaluation of the filter after the debounce delay.
 func (m *Model) queueExecute() tea.Cmd {
-	m.querySeq++
-	seq := m.querySeq
+	seq := m.query.request()
 	m.telemetry.OnQueued(seq)
 	return tea.Tick(queryDebounce, func(time.Time) tea.Msg {
 		return executeQueryMsg{seq: seq}
 	})
 }
 
-func (m *Model) executeNow() tea.Cmd {
-	m.querySeq++
-	m.telemetry.OnQueued(m.querySeq)
-	return m.startExecute(m.querySeq)
-}
-
+// startExecute evaluates the current filter in the background. All heavy
+// post-processing happens in the returned command, off the UI goroutine.
 func (m *Model) startExecute(seq int) tea.Cmd {
-	if m.queryCancel != nil {
-		m.queryCancel()
-		m.queryCancel = nil
-	}
-
-	m.activeQuerySeq = seq
-	m.queryRunning = true
+	ctx := m.query.dispatch(seq)
 	m.telemetry.OnDispatch(seq)
 
-	filter := m.filter.Value()
-	ctx, cancel := context.WithCancel(context.Background())
-	m.queryCancel = cancel
-
+	jqSvc, filter := m.jq, m.filter.Value()
 	return func() tea.Msg {
-		result := m.jq.ExecuteWithContext(ctx, filter)
+		result := jqSvc.ExecuteWithContext(ctx, filter)
 		lines, maxW := processResult(result)
 		var cps map[int][]hlCheckpoint
 		if ctx.Err() == nil {
@@ -228,12 +303,11 @@ func (m *Model) startExecute(seq int) tea.Cmd {
 // processResult splits a result into display lines and measures the widest
 // one. It is CPU heavy for large outputs and must run off the UI goroutine.
 func processResult(result jq.Result) ([]string, int) {
-	var lines []string
+	text := result.Raw
 	if result.Error != nil {
-		lines = strings.Split(result.Error.Error(), "\n")
-	} else {
-		lines = strings.Split(result.Raw, "\n")
+		text = result.Error.Error()
 	}
+	lines := strings.Split(text, "\n")
 	return lines, maxDisplayLineWidth(lines)
 }
 
@@ -253,10 +327,7 @@ func lineDisplayWidth(line string) int {
 func maxDisplayLineWidth(lines []string) int {
 	maxWidth := 0
 	for _, line := range lines {
-		w := lineDisplayWidth(line)
-		if w > maxWidth {
-			maxWidth = w
-		}
+		maxWidth = max(maxWidth, lineDisplayWidth(line))
 	}
 	return maxWidth
 }

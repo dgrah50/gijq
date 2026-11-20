@@ -49,7 +49,7 @@ func (m Model) renderHeader() string {
 	var status string
 	if m.status != "" {
 		status = statusStyle.Render(m.fitStatus(m.status))
-	} else if m.queryRunning {
+	} else if m.query.running() {
 		status = helpStyle.Render("Running...")
 	} else if m.result.Error != nil {
 		status = errorStyle.Render(m.fitStatus("Error: " + m.result.Error.Error()))
@@ -151,7 +151,7 @@ func (m Model) renderContent() string {
 	isErr := m.result.Error != nil
 	var sb strings.Builder
 	for i, rawLine := range visibleLines {
-		text, w, _, _ := highlightWindow(rawLine, m.outputXOffset, outputWidth, !isErr, m.hl.forLine(startLine+i, rawLine))
+		text, w, _, _ := highlightWindow(rawLine, m.outputXOffset, outputWidth, !isErr, m.checkpoints[startLine+i])
 
 		sb.Reset()
 		if isErr && text != "" {
@@ -251,16 +251,17 @@ func (m Model) renderSuggestions() []string {
 	if m.keys.loadingFor(m.currentPath()) {
 		return []string{labelStyle.Render("Loading keys...")}
 	}
-	keys := m.keys.filtered(m.acContext.Incomplete)
+	incomplete := m.acContext().Incomplete
+	keys := m.keys.filtered(incomplete)
 	if len(keys) == 0 {
-		if m.acContext.Incomplete != "" {
+		if incomplete != "" {
 			return []string{labelStyle.Render("No matches")}
 		}
 		return []string{labelStyle.Render("No keys")}
 	}
 
 	var lines []string
-	if m.acContext.Incomplete != "" {
+	if incomplete != "" {
 		lines = append(lines, labelStyle.Render("Matching keys:"))
 	} else {
 		lines = append(lines, labelStyle.Render("Available keys:"))
@@ -273,14 +274,6 @@ func (m Model) renderSuggestions() []string {
 		}
 	}
 	return lines
-}
-
-func (m Model) currentPath() string {
-	ctx := m.acContext
-	if ctx.Path == "" {
-		ctx.Path = "."
-	}
-	return ctx.Path
 }
 
 func (m Model) renderFooter() string {
