@@ -45,7 +45,6 @@ func BenchmarkRenderContentWindow(b *testing.B) {
 			width:  180,
 			height: 60,
 			ready:  true,
-			hl:     newHighlightCache(),
 		}
 	}
 
@@ -139,11 +138,11 @@ func BenchmarkHandleResult(b *testing.B) {
 
 	b.Run("ui-goroutine-update", func(b *testing.B) {
 		lines, w := processResult(result)
-		m := Model{width: 180, height: 60, ready: true, hl: newHighlightCache(), telemetry: newLatencyTelemetry(false)}
+		m := Model{width: 180, height: 60, ready: true, telemetry: newLatencyTelemetry(false)}
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			m.activeQuerySeq = i + 1
+			m.query.active = i + 1
 			next, _ := m.Update(resultMsg{seq: i + 1, result: result, lines: lines, maxLineWidth: w})
 			m = next.(Model)
 		}
@@ -158,11 +157,10 @@ func BenchmarkRenderLongLine(b *testing.B) {
 		width:  180,
 		height: 60,
 		ready:  true,
-		hl:     newHighlightCache(),
 	}
 	m.maxLineWidth = len(raw)
 	m.outputXOffset = 1000
-	_ = m.renderView() // build checkpoints (one-off cost)
+	m.checkpoints = prebuildCheckpoints(m.lines) // built off-thread in the app
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -178,11 +176,10 @@ func BenchmarkRenderLongLineDeep(b *testing.B) {
 		width:  180,
 		height: 60,
 		ready:  true,
-		hl:     newHighlightCache(),
 	}
 	m.maxLineWidth = len(raw)
 	m.outputXOffset = 4000000
-	_ = m.renderView() // build checkpoints (one-off cost)
+	m.checkpoints = prebuildCheckpoints(m.lines) // built off-thread in the app
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

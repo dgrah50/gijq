@@ -1,7 +1,9 @@
 package history
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -84,4 +86,58 @@ func equalSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestStoreGetReturnsCopy(t *testing.T) {
+	s, _ := NewStore(filepath.Join(t.TempDir(), "h.json"))
+	s.Add("f", "a")
+	s.Add("f", "b")
+	got := s.Get("f")
+	got[0] = "mutated"
+	s.Add("f", "a") // dedupe used to rewrite the shared backing array
+	if want := []string{"a", "b"}; !slices.Equal(s.Get("f"), want) {
+		t.Fatalf("Get = %v, want %v", s.Get("f"), want)
+	}
+	if got[0] != "mutated" || got[1] != "a" {
+		t.Fatalf("caller's copy changed: %v", got)
+	}
+}
+
+func TestStoreCorruptFileIsNeverOverwritten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "h.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewStore(path)
+	if err == nil || s == nil {
+		t.Fatalf("want usable store plus error, got %v, %v", s, err)
+	}
+	s.Add("f", ".a")
+	if got := s.Get("f"); len(got) != 1 {
+		t.Fatalf("in-memory store not usable: %v", got)
+	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "{not json" {
+		t.Fatalf("corrupt file was overwritten: %q", data)
+	}
+}
+
+func TestStoreSaveIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "h.json")
+	s, _ := NewStore(path)
+	s.Add("f", ".a")
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) != 1 || entries[0].Name() != "h.json" {
+		t.Fatalf("leftover temp files: %v", entries)
+	}
+	re, err := NewStore(path)
+	if err != nil || !slices.Equal(re.Get("f"), []string{".a"}) {
+		t.Fatalf("reload = %v, %v", re.Get("f"), err)
+	}
 }

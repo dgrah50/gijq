@@ -94,9 +94,9 @@ func send(m Model, msg tea.Msg) (Model, tea.Cmd) {
 
 func deliver(t testing.TB, m Model, result jq.Result) Model {
 	t.Helper()
-	m.activeQuerySeq = m.querySeq
+	m.query.active = m.query.latest
 	lines, w := processResult(result)
-	m, _ = send(m, resultMsg{seq: m.querySeq, result: result, filter: m.filter.Value(), lines: lines, maxLineWidth: w})
+	m, _ = send(m, resultMsg{seq: m.query.latest, result: result, filter: m.filter.Value(), lines: lines, maxLineWidth: w})
 	return m
 }
 
@@ -160,22 +160,21 @@ func TestTabChangingFilterReruns(t *testing.T) {
 	m := newTestModel(t, 100, 30)
 	m.filter.SetValue(".items[0]")
 	m.filter.SetCursor(len(".items[0]"))
-	m.acContext = m.autocomplete.ParseContext(m.filter.Value())
-	seq := m.querySeq
+	seq := m.query.latest
 	m, cmd := send(m, key("tab"))
 	if m.filter.Value() != ".items[0]." {
 		t.Fatalf("filter = %q", m.filter.Value())
 	}
-	if m.querySeq == seq || cmd == nil {
-		t.Fatalf("tab changed filter without re-running query (seq %d -> %d)", seq, m.querySeq)
+	if m.query.latest == seq || cmd == nil {
+		t.Fatalf("tab changed filter without re-running query (seq %d -> %d)", seq, m.query.latest)
 	}
 }
 
 func TestTabUnchangedFilterDoesNotRerun(t *testing.T) {
 	m := newTestModel(t, 100, 30)
-	seq := m.querySeq
+	seq := m.query.latest
 	m, _ = send(m, key("tab"))
-	if m.querySeq != seq {
+	if m.query.latest != seq {
 		t.Fatalf("query re-queued although filter unchanged")
 	}
 }
@@ -189,8 +188,8 @@ func TestEscFromAutocompleteResyncsKeys(t *testing.T) {
 	if m.mode != ModeNormal || m.suggestions != nil {
 		t.Fatalf("mode=%v suggestions=%v", m.mode, m.suggestions)
 	}
-	if want := m.autocomplete.ParseContext(".items[0].").Path; m.acContext.Path != want {
-		t.Fatalf("acContext.Path = %q, want %q", m.acContext.Path, want)
+	if want := m.autocomplete.ParseContext(".items[0].").Path; m.acContext().Path != want {
+		t.Fatalf("acContext.Path = %q, want %q", m.acContext().Path, want)
 	}
 	if !m.keys.loadingFor(m.currentPath()) || cmd == nil {
 		t.Fatalf("keys not re-fetched: %+v cmd=%v", m.keys, cmd)
@@ -363,7 +362,6 @@ func TestEnterWithStaleResultEvaluatesCurrentFilter(t *testing.T) {
 	// whose query hasn't come back yet (debounce pending / still running).
 	m = deliver(t, m, jq.Result{Raw: "STALE"})
 	m.filter.SetValue(".items[0].name")
-	m.queryRunning = true
 
 	next, cmd := m.Update(key("enter"))
 	got := next.(Model)
@@ -383,5 +381,104 @@ func TestEnterWithStaleResultEvaluatesCurrentFilter(t *testing.T) {
 	next, _ = m.Update(key("enter"))
 	if out, _ := next.(Model).Output(); out != "SHOWN" {
 		t.Fatalf("fresh result should be used, got %q", out)
+	}
+}
+
+// Every way of editing the filter must queue a query and keep the keys pane
+// on the filter's path; handlers never do this themselves (see handleKey).
+func TestEveryFilterEditQueuesQueryAndSyncsKeys(t *testing.T) {
+	type step func(m Model) Model
+	typeText := func(s string) step {
+		return func(m Model) Model {
+			for _, r := range s {
+				m, _ = send(m, key(string(r)))
+			}
+			return m
+		}
+	}
+	press := func(k string) step { return func(m Model) Model { m, _ = send(m, key(k)); return m } }
+	cases := []struct {
+		name  string
+		setup []step
+		edit  step
+	}{
+		{"typing", nil, typeText("i")},
+		{"delete prev word", []step{typeText("items")}, press("ctrl+w")},
+		{"delete next word", []step{typeText("items"), press("home"), press("alt+left")}, press("alt+d")},
+		{"tab drills into array element", []step{typeText("items[0]")}, press("tab")},
+		{"autocomplete enter", []step{press("tab")}, press("enter")},
+		{"history enter", []step{func(m Model) Model {
+			m.history.Add(m.filepath, ".meta")
+			return m
+		}, press("ctrl+h")}, press("enter")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModel(t, 100, 30)
+			for _, s := range tc.setup {
+				m = s(m)
+			}
+			before, seq := m.filter.Value(), m.query.latest
+			m = tc.edit(m)
+			if m.filter.Value() == before {
+				t.Fatalf("edit did not change filter %q", before)
+			}
+			if m.query.latest == seq {
+				t.Fatalf("filter changed %q -> %q without queuing a query", before, m.filter.Value())
+			}
+			if m.keys.path != m.currentPath() {
+				t.Fatalf("keys pane path %q != current path %q", m.keys.path, m.currentPath())
+			}
+		})
+	}
+}
+
+func TestModeChangesDropOtherModeData(t *testing.T) {
+	m := newTestModel(t, 100, 30)
+	m.history.Add(m.filepath, ".meta")
+	m, _ = send(m, key("ctrl+h"))
+	if m.mode != ModeHistory || len(m.historyItems) != 1 {
+		t.Fatalf("history not opened: mode=%v items=%v", m.mode, m.historyItems)
+	}
+	m, _ = send(m, key("esc"))
+	if m.mode != ModeNormal || m.historyItems != nil || m.historyIdx != 0 {
+		t.Fatalf("history data survived leaving history: %v %d", m.historyItems, m.historyIdx)
+	}
+	m, _ = send(m, key("tab"))
+	if m.mode != ModeAutocomplete || len(m.suggestions) == 0 {
+		t.Fatalf("autocomplete not opened: mode=%v", m.mode)
+	}
+	m, _ = send(m, key("f1"))
+	if m.mode != ModeHelp || m.suggestions != nil || m.selectedIdx != 0 {
+		t.Fatalf("suggestions survived entering help")
+	}
+}
+
+func TestTabWithoutSuggestionsStaysNormal(t *testing.T) {
+	m := newTestModel(t, 100, 30)
+	m.setFilter(".nope")
+	m, _ = send(m, key("tab"))
+	if m.mode != ModeNormal {
+		t.Fatalf("mode = %v, want normal when nothing to suggest", m.mode)
+	}
+}
+
+func TestNothingStartsAfterQuit(t *testing.T) {
+	m := newTestModel(t, 100, 30)
+	m.setFilter(".items") // path differs from the keys pane's
+	m, cmd := send(m, key("ctrl+c"))
+	if !m.quitting {
+		t.Fatal("not quitting")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("expected only the quit command")
+	}
+}
+
+func TestWrapIndex(t *testing.T) {
+	for _, tc := range []struct{ i, n, want int }{{0, 0, 0}, {-1, 3, 2}, {3, 3, 0}, {4, 3, 1}, {-4, 3, 2}} {
+		if got := wrapIndex(tc.i, tc.n); got != tc.want {
+			t.Errorf("wrapIndex(%d,%d) = %d, want %d", tc.i, tc.n, got, tc.want)
+		}
 	}
 }

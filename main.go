@@ -31,24 +31,22 @@ func run() error {
 		return nil
 	}
 
-	// Determine input source
-	jsonData, filename, filepath, err := loadInput()
+	stdinIsTTY := term.IsTerminal(os.Stdin.Fd())
+	jsonData, filename, filepath, err := loadInput(os.Args[1:], os.Stdin, stdinIsTTY)
 	if err != nil {
 		return err
 	}
 
-	// Create services
 	jqSvc, err := jq.NewService(jsonData)
 	if err != nil {
 		return fmt.Errorf("failed to parse JSON: %w", err)
 	}
-
 	acSvc := autocomplete.NewService(jqSvc)
 
-	histPath := getHistoryPath()
-	hist, err := history.NewStore(histPath)
+	// History is a convenience: problems with it never stop the program.
+	hist, err := history.NewStore(getHistoryPath())
 	if err != nil {
-		return fmt.Errorf("failed to load history: %w", err)
+		fmt.Fprintln(os.Stderr, "warning:", err)
 	}
 
 	clip := clipboard.NewService()
@@ -64,7 +62,7 @@ func run() error {
 	// The TUI must never write to a piped stdout (the result goes there) and
 	// must read keys from the terminal when stdin carries the JSON. Alt screen
 	// is declared on the model's View.
-	opts, closeTTY, err := ttyOptions()
+	opts, closeTTY, err := ttyOptions(stdinIsTTY)
 	if err != nil {
 		return err
 	}
@@ -72,14 +70,17 @@ func run() error {
 
 	p := tea.NewProgram(model, opts...)
 	finalModel, err := p.Run()
-	if telemetryEnabled {
-		printTelemetrySummary(finalModel, os.Stderr)
+	final, isModel := finalModel.(ui.Model)
+	if telemetryEnabled && isModel {
+		if summary, ok := final.TelemetrySummary(); ok {
+			fmt.Fprintln(os.Stderr, summary)
+		}
 	}
 	if err != nil {
 		return err
 	}
 	// Print only after Run returns so the alt screen is already torn down.
-	if out, ok := finalOutput(finalModel); ok {
+	if out, ok := final.Output(); isModel && ok {
 		if _, err := io.WriteString(os.Stdout, out); err != nil {
 			return fmt.Errorf("failed to write output: %w", err)
 		}
@@ -89,8 +90,7 @@ func run() error {
 
 // ttyOptions redirects Bubble Tea's I/O to the controlling terminal when
 // stdin or stdout is not a terminal.
-func ttyOptions() ([]tea.ProgramOption, func(), error) {
-	inTTY := term.IsTerminal(os.Stdin.Fd())
+func ttyOptions(inTTY bool) ([]tea.ProgramOption, func(), error) {
 	outTTY := term.IsTerminal(os.Stdout.Fd())
 	if inTTY && outTTY {
 		return nil, func() {}, nil
@@ -113,45 +113,31 @@ func ttyOptions() ([]tea.ProgramOption, func(), error) {
 	return opts, closer, nil
 }
 
-func finalOutput(model tea.Model) (string, bool) {
-	switch m := model.(type) {
-	case ui.Model:
-		return m.Output()
-	case *ui.Model:
-		return m.Output()
-	}
-	return "", false
-}
-
-func loadInput() ([]byte, string, string, error) {
-	// Check for piped input
-	stat, _ := os.Stdin.Stat()
-	if (stat.Mode() & os.ModeCharDevice) == 0 {
-		// Reading from pipe
-		data, err := io.ReadAll(os.Stdin)
+// loadInput reads the JSON to explore. A file argument always wins; without
+// one, piped stdin is used. It returns the data, a display name and the path
+// used to key history.
+func loadInput(args []string, stdin io.Reader, stdinIsTTY bool) ([]byte, string, string, error) {
+	if len(args) > 0 {
+		path := args[0]
+		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, "", "", fmt.Errorf("failed to read stdin: %w", err)
+			return nil, "", "", fmt.Errorf("failed to read %s: %w", path, err)
 		}
-		return data, "<stdin>", "<stdin>", nil
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			absPath = path
+		}
+		return data, filepath.Base(path), absPath, nil
 	}
 
-	// Read from file argument
-	if len(os.Args) < 2 {
+	if stdinIsTTY {
 		return nil, "", "", errors.New(usageText())
 	}
-
-	path := os.Args[1]
-	absPath, err := filepath.Abs(path)
+	data, err := io.ReadAll(stdin)
 	if err != nil {
-		absPath = path
+		return nil, "", "", fmt.Errorf("failed to read stdin: %w", err)
 	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, "", "", fmt.Errorf("failed to read %s: %w", path, err)
-	}
-
-	return data, filepath.Base(path), absPath, nil
+	return data, "<stdin>", "<stdin>", nil
 }
 
 func wantsHelp(args []string) bool {
@@ -189,17 +175,4 @@ func getHistoryPath() string {
 func envEnabled(name string) bool {
 	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
 	return v == "1" || v == "true" || v == "yes" || v == "on"
-}
-
-func printTelemetrySummary(model tea.Model, w io.Writer) {
-	switch m := model.(type) {
-	case ui.Model:
-		if summary, ok := m.TelemetrySummary(); ok {
-			fmt.Fprintln(w, summary)
-		}
-	case *ui.Model:
-		if summary, ok := m.TelemetrySummary(); ok {
-			fmt.Fprintln(w, summary)
-		}
-	}
 }
