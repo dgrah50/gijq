@@ -229,17 +229,6 @@ func TestCheckpointsMatchFullLex(t *testing.T) {
 	}
 }
 
-func TestPrebuildCheckpointsLongLinesOnly(t *testing.T) {
-	long := strings.Repeat("a", 3*hlStride)
-	cps := prebuildCheckpoints([]string{"short", "", long})
-	if len(cps) != 1 || len(cps[2]) == 0 {
-		t.Fatalf("want checkpoints only for line 2, got %v", cps)
-	}
-	if prebuildCheckpoints([]string{"a", "b"}) != nil {
-		t.Fatal("no long lines must yield a nil map")
-	}
-}
-
 func TestMalformedInputDoesNotPanic(t *testing.T) {
 	inputs := []string{
 		`"unterminated`, `"abc\`, `\`, `\\\`, `"`, `""`, `:`, `{[}]`, "\x00\xff\xfe", `-`, `tru`, `truee`, `nullx`,
@@ -290,23 +279,25 @@ func TestLineDisplayWidthConsistent(t *testing.T) {
 	}
 }
 
-func TestPrebuiltCheckpointsMatchLazy(t *testing.T) {
+func TestWindowCheckpointsMatchLazy(t *testing.T) {
 	long := `{"payload":"` + strings.Repeat("ab\\\"c", 5000) + `","n":1}`
-	lines := []string{"short", long}
-	pre := prebuildCheckpoints(lines)
-	if _, ok := pre[0]; ok {
+	w := &window{lines: []string{"short", long}, widths: []int{5, len(long)}}
+	if w.checkpoints(0) != nil {
 		t.Fatalf("short line should have no checkpoints")
 	}
-	got := pre[1]
+	got := w.checkpoints(1)
 	want := buildCheckpoints(long)
 	if len(got) != len(want) || len(got) == 0 {
 		t.Fatalf("checkpoints len = %d, want %d (non-zero)", len(got), len(want))
+	}
+	if again := w.checkpoints(1); &again[0] != &got[0] {
+		t.Fatal("checkpoints not memoised")
 	}
 	for _, x := range []int{0, 5000, 20000} {
 		a, _, _, _ := highlightWindow(long, x, 80, true, got)
 		b, _, _, _ := highlightWindow(long, x, 80, true, nil)
 		if a != b {
-			t.Fatalf("offset %d: prebuilt render differs from lex-from-0", x)
+			t.Fatalf("offset %d: checkpoint render differs from lex-from-0", x)
 		}
 	}
 }

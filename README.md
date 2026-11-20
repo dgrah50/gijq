@@ -15,6 +15,7 @@ cat data.json | gijq
 ## Features
 
 - **Live filtering** -- results update as you type any valid jq expression
+- **Fast on large files** -- results stream in and only the visible lines are rendered, so even multi-million-line outputs appear instantly; the footer shows result and line counts (`+` while still counting)
 - **Tab completion** -- press Tab to cycle through available keys at the current path, works through nested objects, arrays, and pipe expressions
 - **Split-pane layout** -- JSON output on the left, available keys on the right
 - **Query history** -- per-file history accessible via Ctrl+H, persisted across sessions

@@ -30,8 +30,12 @@ func (m Model) halfPage() int {
 	return 1
 }
 
+// maxYOffset is the largest scroll offset. Until the index is complete it is
+// derived from the lines known so far (a lower bound), so the user can scroll
+// further as the index grows.
 func (m Model) maxYOffset() int {
-	n := len(m.lines) - m.contentHeight()
+	lines, _ := m.result.lineCount()
+	n := lines - m.contentHeight()
 	if n < 0 {
 		return 0
 	}
@@ -44,6 +48,18 @@ func (m *Model) clampYOffset() {
 	}
 	if m.yOffset < 0 {
 		m.yOffset = 0
+	}
+	m.observeVisibleWidth()
+}
+
+// observeVisibleWidth records the widths of the lines on screen as a lower
+// bound for horizontal scrolling (see resultView.seenWidth).
+func (m *Model) observeVisibleWidth() {
+	if m.result.hasError() {
+		return
+	}
+	for _, w := range m.result.window(m.yOffset, m.contentHeight()).widths {
+		m.result.observe(w)
 	}
 }
 
@@ -73,7 +89,8 @@ func (m Model) maxHorizontalOffset() int {
 	if outputWidth <= 0 {
 		return 0
 	}
-	maxOffset := m.maxLineWidth - outputWidth
+	width, _ := m.result.maxWidth()
+	maxOffset := width - outputWidth
 	if maxOffset < 0 {
 		return 0
 	}

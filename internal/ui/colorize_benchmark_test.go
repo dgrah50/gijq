@@ -1,11 +1,12 @@
 package ui
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/dayangraham/gijq/internal/jq"
+	"github.com/dayangraham/gijq/internal/jsonview"
 )
 
 func BenchmarkHighlightWindow(b *testing.B) {
@@ -34,19 +35,35 @@ func BenchmarkHighlightWindow(b *testing.B) {
 	})
 }
 
-func BenchmarkRenderContentWindow(b *testing.B) {
-	raw := syntheticPrettyJSON(120000)
-	lines := strings.Split(raw, "\n")
+// benchModel is a ready Model showing values as a complete, indexed result.
+func benchModel(b *testing.B, width, height int, values ...any) Model {
+	b.Helper()
+	doc := jsonview.NewDoc(values)
+	ix, err := doc.BuildIndex(context.Background(), 0, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	r := newResultView()
+	r.snap = &jsonview.Snapshot{Values: values, Doc: doc, Done: true}
+	r.index = ix
+	return Model{result: r, width: width, height: height, ready: true}
+}
 
-	newModel := func() Model {
-		return Model{
-			result: jq.Result{Raw: raw},
-			lines:  lines,
-			width:  180,
-			height: 60,
-			ready:  true,
+func syntheticValue(items int) any {
+	arr := make([]any, items)
+	for i := range arr {
+		arr[i] = map[string]any{
+			"id": i, "name": "item-" + intToString(i), "ok": i%2 == 0,
+			"ratio": float64(i%1000) / 1000,
 		}
 	}
+	return map[string]any{"items": arr}
+}
+
+func BenchmarkRenderContentWindow(b *testing.B) {
+	newModel := func() Model { return benchModel(b, 180, 60, syntheticValue(120000)) }
+	probe := newModel()
+	total, _ := probe.result.lineCount()
 
 	b.Run("fixed-offset", func(b *testing.B) {
 		m := newModel()
@@ -59,11 +76,7 @@ func BenchmarkRenderContentWindow(b *testing.B) {
 
 	b.Run("scrolling", func(b *testing.B) {
 		m := newModel()
-		maxOffset := len(lines) - m.contentHeight()
-		if maxOffset < 1 {
-			maxOffset = 1
-		}
-
+		maxOffset := max(total-m.contentHeight(), 1)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -73,10 +86,11 @@ func BenchmarkRenderContentWindow(b *testing.B) {
 	})
 
 	b.Run("cold-cache", func(b *testing.B) {
+		m := newModel()
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			m := newModel()
+			m.result.cache = &visibleCache{}
 			m.yOffset = i % 1000
 			_ = m.renderContent()
 		}
@@ -109,58 +123,30 @@ func syntheticPrettyJSON(items int) string {
 	return b.String()
 }
 
-func visibleWindow(s string, start, maxLines int) string {
-	lines := strings.Split(s, "\n")
-	if start >= len(lines) {
-		return ""
-	}
-	end := start + maxLines
-	if end > len(lines) {
-		end = len(lines)
-	}
-	return strings.Join(lines[start:end], "\n")
-}
-
 func intToString(v int) string {
 	return strconv.Itoa(v)
 }
 
 func BenchmarkHandleResult(b *testing.B) {
-	raw := syntheticPrettyJSON(120000)
-	result := jq.Result{Raw: raw}
+	values := []any{syntheticValue(120000)}
+	snap := &jsonview.Snapshot{Values: values, Doc: jsonview.NewDoc(values), Done: true}
+	m := Model{width: 180, height: 60, ready: true, result: newResultView(), telemetry: newLatencyTelemetry(false)}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.query.active, m.query.phase = i+1, queryStreaming
+		next, _ := m.Update(resultMsg{seq: i + 1, snap: snap})
+		m = next.(Model)
+	}
+}
 
-	b.Run("background-postprocess", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			_, _ = processResult(result)
-		}
-	})
-
-	b.Run("ui-goroutine-update", func(b *testing.B) {
-		lines, w := processResult(result)
-		m := Model{width: 180, height: 60, ready: true, telemetry: newLatencyTelemetry(false)}
-		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			m.query.active = i + 1
-			next, _ := m.Update(resultMsg{seq: i + 1, result: result, lines: lines, maxLineWidth: w})
-			m = next.(Model)
-		}
-	})
+func longLineModel(b *testing.B) Model {
+	return benchModel(b, 180, 60, strings.Repeat("abcdefghij", 500000))
 }
 
 func BenchmarkRenderLongLine(b *testing.B) {
-	raw := `"` + strings.Repeat("abcdefghij", 500000) + `"`
-	m := Model{
-		result: jq.Result{Raw: raw},
-		lines:  []string{raw},
-		width:  180,
-		height: 60,
-		ready:  true,
-	}
-	m.maxLineWidth = len(raw)
+	m := longLineModel(b)
 	m.outputXOffset = 1000
-	m.checkpoints = prebuildCheckpoints(m.lines) // built off-thread in the app
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -169,17 +155,7 @@ func BenchmarkRenderLongLine(b *testing.B) {
 }
 
 func BenchmarkRenderLongLineDeep(b *testing.B) {
-	raw := `"` + strings.Repeat("abcdefghij", 500000) + `"`
-	m := Model{
-		result: jq.Result{Raw: raw},
-		lines:  []string{raw},
-		width:  180,
-		height: 60,
-		ready:  true,
-	}
-	m.maxLineWidth = len(raw)
-	m.outputXOffset = 4000000
-	m.checkpoints = prebuildCheckpoints(m.lines) // built off-thread in the app
+	m := longLineModel(b)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

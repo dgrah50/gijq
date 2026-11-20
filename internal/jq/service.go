@@ -84,6 +84,17 @@ func (s *Service) ExecuteWithContext(ctx context.Context, filter string) Result 
 	return Result{Raw: raw}
 }
 
+// Iter compiles filter (through the code cache) and starts it on the parsed
+// input. The caller drains the iterator; error values come out of Next as
+// error values. Cancelling ctx stops the evaluation.
+func (s *Service) Iter(ctx context.Context, filter string) (gojq.Iter, error) {
+	code, err := s.compiledQuery(filter)
+	if err != nil {
+		return nil, err
+	}
+	return code.RunWithContext(ctx, s.data), nil
+}
+
 func formatResults(ctx context.Context, results []any) (string, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

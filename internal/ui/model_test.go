@@ -14,6 +14,7 @@ import (
 	"github.com/dayangraham/gijq/internal/clipboard"
 	"github.com/dayangraham/gijq/internal/history"
 	"github.com/dayangraham/gijq/internal/jq"
+	"github.com/dayangraham/gijq/internal/jsonview"
 )
 
 const testJSON = `{"items":[{"name":"x","id":1},{"name":"y","id":2}],"meta":{"count":2}}`
@@ -92,24 +93,82 @@ func send(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	return next.(Model), cmd
 }
 
-func deliver(t testing.TB, m Model, result jq.Result) Model {
+// settle runs cmd and feeds every message it produces back into the model
+// until no command is left (collection and indexing are finite in tests).
+func settle(t testing.TB, m Model, cmd tea.Cmd) Model {
 	t.Helper()
-	m.query.active = m.query.latest
-	lines, w := processResult(result)
-	m, _ = send(m, resultMsg{seq: m.query.latest, result: result, filter: m.filter.Value(), lines: lines, maxLineWidth: w})
+	for cmd != nil {
+		m, cmd = send(m, cmd())
+	}
 	return m
+}
+
+// runQuery dispatches the latest requested query and settles it.
+func runQuery(t testing.TB, m Model) Model {
+	t.Helper()
+	m, cmd := send(m, executeQueryMsg{seq: m.query.latest})
+	return settle(t, m, cmd)
+}
+
+// runFilter sets the filter and evaluates it to completion (result fully
+// collected and indexed).
+func runFilter(t testing.TB, m Model, filter string) Model {
+	t.Helper()
+	m.setFilter(filter)
+	m.query.request()
+	return runQuery(t, m)
+}
+
+// deliverValues shows values as the (complete, indexed) result of the
+// current filter.
+func deliverValues(t testing.TB, m Model, values ...any) Model {
+	t.Helper()
+	seq := m.query.latest
+	m.query.dispatch(seq)
+	snap := &jsonview.Snapshot{Values: values, Doc: jsonview.NewDoc(values), Done: true}
+	m, cmd := send(m, resultMsg{seq: seq, filter: m.filter.Value(), snap: snap})
+	return settle(t, m, cmd)
+}
+
+// deliverErr shows err as the result of the current filter.
+func deliverErr(t testing.TB, m Model, err error) Model {
+	t.Helper()
+	seq := m.query.latest
+	m.query.dispatch(seq)
+	m, _ = send(m, resultMsg{seq: seq, filter: m.filter.Value(), err: err})
+	return m
+}
+
+// docText is the full text of a document.
+func docText(t testing.TB, d *jsonview.Doc) string {
+	t.Helper()
+	var sb strings.Builder
+	if _, err := d.WriteTo(&sb); err != nil {
+		t.Fatal(err)
+	}
+	return sb.String()
+}
+
+// outputText is what the program would print after exit.
+func outputText(t testing.TB, m Model) (string, bool) {
+	t.Helper()
+	d, ok := m.Output()
+	if !ok {
+		return "", false
+	}
+	return docText(t, d), true
 }
 
 func TestRenderViewFitsWidthAndHeight(t *testing.T) {
 	long := strings.Repeat("世界abc", 200)
-	raw := "{\n  \"a\": \"" + long + "\",\n  \"b\": 1\n}"
+	val := map[string]any{"a": long, "b": float64(1)}
 	for _, width := range []int{50, 80, 120, 200} {
 		for _, errResult := range []bool{false, true} {
 			m := newTestModel(t, width, 30)
 			if errResult {
-				m = deliver(t, m, jq.Result{Error: errTest("boom " + long)})
+				m = deliverErr(t, m, errTest("boom "+long))
 			} else {
-				m = deliver(t, m, jq.Result{Raw: raw})
+				m = deliverValues(t, m, val)
 			}
 			for _, xo := range []int{0, 7, 100} {
 				m.outputXOffset = xo
@@ -145,12 +204,16 @@ func (e errTest) Error() string { return string(e) }
 
 func TestResultKeepsScrollClamped(t *testing.T) {
 	m := newTestModel(t, 100, 20)
-	m = deliver(t, m, jq.Result{Raw: strings.Repeat("l\n", 100) + "l"})
+	many := make([]any, 101)
+	for i := range many {
+		many[i] = "l"
+	}
+	m = deliverValues(t, m, many...)
 	m.scrollY(1000)
 	if want := 101 - m.contentHeight(); m.yOffset != want {
 		t.Fatalf("yOffset = %d, want %d", m.yOffset, want)
 	}
-	m = deliver(t, m, jq.Result{Raw: "a\nb"})
+	m = deliverValues(t, m, "a", "b")
 	if m.yOffset != 0 {
 		t.Fatalf("yOffset after short result = %d, want 0", m.yOffset)
 	}
@@ -316,7 +379,7 @@ func TestKeyHelperStringsMatchBindings(t *testing.T) {
 
 func TestEnterRecordsOutputAndQuitsWithoutWriting(t *testing.T) {
 	m := newTestModel(t, 100, 30)
-	m = deliver(t, m, jq.Result{Raw: "{\n  \"a\": 1\n}"})
+	m = deliverValues(t, m, map[string]any{"a": float64(1)})
 
 	// Capture anything written to stdout during Update.
 	old := os.Stdout
@@ -334,7 +397,7 @@ func TestEnterRecordsOutputAndQuitsWithoutWriting(t *testing.T) {
 	}
 
 	got := next.(Model)
-	out, ok := got.Output()
+	out, ok := outputText(t, got)
 	if !ok || out != "{\n  \"a\": 1\n}" {
 		t.Fatalf("Output() = %q, %v", out, ok)
 	}
@@ -346,7 +409,7 @@ func TestEnterRecordsOutputAndQuitsWithoutWriting(t *testing.T) {
 	}
 
 	// Errors produce no output but still quit.
-	m = deliver(t, newTestModel(t, 100, 30), jq.Result{Error: errTest("boom")})
+	m = deliverErr(t, newTestModel(t, 100, 30), errTest("boom"))
 	next, cmd = m.Update(key("enter"))
 	if _, ok := next.(Model).Output(); ok {
 		t.Fatal("error result must not be output")
@@ -360,12 +423,12 @@ func TestEnterWithStaleResultEvaluatesCurrentFilter(t *testing.T) {
 	m := newTestModel(t, 100, 30)
 	// Result shown is for "." but the user has since typed a new filter
 	// whose query hasn't come back yet (debounce pending / still running).
-	m = deliver(t, m, jq.Result{Raw: "STALE"})
+	m = deliverValues(t, m, "STALE")
 	m.filter.SetValue(".items[0].name")
 
 	next, cmd := m.Update(key("enter"))
 	got := next.(Model)
-	out, ok := got.Output()
+	out, ok := outputText(t, got)
 	if !ok || out != `"x"` {
 		t.Fatalf("Output() = %q, %v; want current filter's result", out, ok)
 	}
@@ -376,10 +439,10 @@ func TestEnterWithStaleResultEvaluatesCurrentFilter(t *testing.T) {
 		t.Fatal("expected quit")
 	}
 
-	// Same filter, not running: the shown result is used as-is (no re-run).
-	m = deliver(t, newTestModel(t, 100, 30), jq.Result{Raw: "SHOWN"})
+	// Same filter, fully collected: the shown result is used as-is (no re-run).
+	m = deliverValues(t, newTestModel(t, 100, 30), "SHOWN")
 	next, _ = m.Update(key("enter"))
-	if out, _ := next.(Model).Output(); out != "SHOWN" {
+	if out, _ := outputText(t, next.(Model)); out != `"SHOWN"` {
 		t.Fatalf("fresh result should be used, got %q", out)
 	}
 }

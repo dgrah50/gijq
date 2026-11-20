@@ -81,7 +81,7 @@ func run() error {
 	}
 	// Print only after Run returns so the alt screen is already torn down.
 	if out, ok := final.Output(); isModel && ok {
-		if _, err := io.WriteString(os.Stdout, out); err != nil {
+		if _, err := out.WriteTo(os.Stdout); err != nil {
 			return fmt.Errorf("failed to write output: %w", err)
 		}
 	}

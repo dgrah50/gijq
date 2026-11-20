@@ -7,6 +7,9 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/dayangraham/gijq/internal/jq"
+	"github.com/dayangraham/gijq/internal/jsonview"
 )
 
 // Update handles messages
@@ -35,19 +38,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.startExecute(msg.seq)
 
 	case resultMsg:
-		accepted := m.query.finish(msg.seq)
-		m.telemetry.OnResult(msg.seq, msg.result.Error, accepted)
-		if !accepted || errors.Is(msg.result.Error, context.Canceled) {
+		return m.handleResult(msg)
+
+	case resultProgressMsg:
+		// Stale or finished queries are dropped and not re-armed.
+		if !m.query.live(msg.seq) || m.query.phase != queryStreaming {
 			return m, nil
 		}
-		m.result = msg.result
-		m.resultFilter = msg.filter
-		m.lines = msg.lines
-		m.maxLineWidth = msg.maxLineWidth
-		m.checkpoints = msg.checkpoints
-		m.clampOutputXOffset()
-		m.clampYOffset()
-		return m, nil
+		return m.applySnapshot(msg.seq, msg.collector, msg.snap)
+
+	case indexMsg:
+		return m.handleIndex(msg)
 
 	case keysMsg:
 		m.keys.receive(msg.path, msg.keys, msg.err)
@@ -61,6 +62,79 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// handleResult applies the first message of a query: it replaces the shown
+// result. Messages of superseded queries are dropped.
+func (m Model) handleResult(msg resultMsg) (Model, tea.Cmd) {
+	accepted := m.query.live(msg.seq)
+	err := msg.err
+	if msg.snap != nil {
+		err = msg.snap.Err
+	}
+	m.telemetry.OnResult(msg.seq, err, accepted)
+	if !accepted {
+		return m, nil
+	}
+	if msg.err != nil {
+		m.result.begin(msg.filter)
+		m.result.setError(msg.err)
+		m.query.stop()
+		m.clampOutputXOffset()
+		m.clampYOffset()
+		return m, nil
+	}
+	m.result.begin(msg.filter)
+	return m.applySnapshot(msg.seq, msg.collector, msg.snap)
+}
+
+// applySnapshot adopts a collector snapshot of the live query and decides
+// what comes next: wait for more values (streaming), build the index
+// (collected), or stop (failed).
+func (m Model) applySnapshot(seq int, c *jsonview.Collector, snap *jsonview.Snapshot) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch {
+	case errors.Is(snap.Err, context.Canceled):
+		// Only cancellation produces this, and cancellation goes through
+		// query.stop, which makes the query not live. Be defensive anyway.
+		m.query.stop()
+		return m, nil
+	case snap.Err != nil:
+		m.result.setError(snap.Err)
+		m.query.stop()
+	case !snap.Done:
+		m.result.setSnapshot(snap, m.firstScreenLines())
+		cmd = waitProgress(m.query.ctx, seq, c)
+	default:
+		m.result.setSnapshot(snap, m.firstScreenLines())
+		m.query.collected()
+		cmd = startIndex(m.query.ctx, seq, snap.Doc)
+	}
+	m.clampOutputXOffset()
+	m.clampYOffset()
+	return m, cmd
+}
+
+// handleIndex applies an index snapshot of the document being shown.
+func (m Model) handleIndex(msg indexMsg) (Model, tea.Cmd) {
+	if !m.query.live(msg.seq) || m.query.phase != queryIndexing ||
+		m.result.snap == nil || msg.doc != m.result.snap.Doc {
+		return m, nil
+	}
+	if msg.index == nil { // builder ended without a result
+		m.query.stop()
+		return m, nil
+	}
+	m.result.setIndex(msg.index)
+	var cmd tea.Cmd
+	if msg.index.Complete() {
+		m.query.stop() // indexing done: back to idle
+	} else {
+		cmd = waitIndex(m.query.ctx, msg.seq, msg.doc, msg.ch)
+	}
+	m.clampOutputXOffset()
+	m.clampYOffset()
+	return m, cmd
 }
 
 // handleKey dispatches a key press, then applies the follow-up every filter
@@ -82,6 +156,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // quit moves the model to its terminal state and returns the quit command.
 func (m *Model) quit() tea.Cmd {
 	m.quitting = true
+	m.query.stop() // no query goroutine outlives the program
 	return tea.Quit
 }
 
@@ -107,7 +182,7 @@ func (m Model) dispatchKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+y":
-		return m.copyToClipboard(m.result.Raw, "output")
+		return m.copyOutput()
 
 	case "ctrl+f":
 		return m.copyToClipboard(m.filter.Value(), "filter")
@@ -176,20 +251,54 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// confirm records the result of the current filter for printing after exit
-// and quits. The shown result may belong to an older filter (query still
-// debouncing or running); in that case the current filter is evaluated now so
-// the printed output always matches the filter on screen.
-func (m Model) confirm() (Model, tea.Cmd) {
+// currentDoc returns the complete result of the filter on screen. It uses
+// the shown result when it is this filter's and fully collected; otherwise
+// (stale filter, or still streaming) it evaluates the filter to completion on
+// the calling goroutine, leaving the background query untouched. ok is false
+// when the filter's result is an error.
+func (m Model) currentDoc() (doc *jsonview.Doc, ok bool) {
 	filter := m.filter.Value()
-	result := m.result
-	if m.resultFilter != filter {
-		m.query.stop()
-		result = m.jq.Execute(filter)
+	if m.result.filter == filter {
+		if m.result.hasError() {
+			return nil, false
+		}
+		if m.result.complete() {
+			return m.result.snap.Doc, true
+		}
 	}
-	if result.Error == nil && result.Raw != "" {
-		m.output = result.Raw
-		m.history.Add(m.filepath, filter)
+	d, err := evalDoc(m.jq, filter)
+	return d, err == nil
+}
+
+// evalDoc evaluates filter to completion on the calling goroutine. Any error
+// value fails the whole result, as in the shown result.
+func evalDoc(svc *jq.Service, filter string) (*jsonview.Doc, error) {
+	iter, err := svc.Iter(context.Background(), filter)
+	if err != nil {
+		return nil, err
+	}
+	var values []any
+	for {
+		v, ok := iter.Next()
+		if !ok {
+			return jsonview.NewDoc(values), nil
+		}
+		if err, isErr := v.(error); isErr {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+}
+
+// confirm records the result of the current filter for printing after exit
+// and quits. The shown result may belong to an older filter, or still be
+// streaming; in that case the current filter is evaluated now so the printed
+// output always matches the filter on screen and is complete.
+func (m Model) confirm() (Model, tea.Cmd) {
+	m.query.stop() // exiting: nothing in the background matters any more
+	if doc, ok := m.currentDoc(); ok && doc.NumValues() > 0 {
+		m.output = doc
+		m.history.Add(m.filepath, m.filter.Value())
 		_ = m.history.Save() // best effort: never block exiting on history
 	}
 	return m, m.quit()
@@ -281,6 +390,30 @@ func wrapIndex(i, n int) int {
 		return 0
 	}
 	return ((i % n) + n) % n
+}
+
+// resultText builds the full text of the current filter's result for the
+// clipboard, on demand from the complete document. When there is nothing to
+// copy it returns the status message explaining why instead.
+func (m Model) resultText() (text, problem string) {
+	doc, ok := m.currentDoc()
+	if !ok || doc.NumValues() == 0 {
+		return "", "Nothing to copy"
+	}
+	var sb strings.Builder
+	if _, err := doc.WriteTo(&sb); err != nil {
+		return "", "Copy failed: " + err.Error()
+	}
+	return sb.String(), ""
+}
+
+// copyOutput copies the full result text of the current filter.
+func (m Model) copyOutput() (Model, tea.Cmd) {
+	text, problem := m.resultText()
+	if problem != "" {
+		return m, m.setStatus(problem)
+	}
+	return m.copyToClipboard(text, "output")
 }
 
 func (m Model) copyToClipboard(text, what string) (Model, tea.Cmd) {

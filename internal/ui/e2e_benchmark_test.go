@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -15,11 +14,18 @@ import (
 	"github.com/dayangraham/gijq/internal/jq"
 )
 
-// Baseline for the "query -> frame on screen" cost of the current pipeline.
-// Each iteration mirrors what the app does after the debounce fires:
-// execute, post-process, prebuild checkpoints, apply the result message,
-// and render a full frame. The 30ms debounce is excluded.
-
+// BenchmarkQueryToFrame measures "query -> first frame on screen" of the
+// streaming, lazy pipeline: run the command startExecute returns (compile,
+// collect the first screen), apply the resultMsg on the "UI goroutine" and
+// render a full frame. The 30ms debounce is excluded. The rest of the
+// collection and the index build run in the background after the first frame
+// and are cancelled (outside the timer) before the next iteration.
+//
+// Baseline of the previous whole-string pipeline (Execute, split, measure,
+// prebuild checkpoints, apply, render; same 160x50 model, Apple M-series):
+//
+//	55 MB: .  387 ms | .items  380 ms | select .id  66 ms | select .metrics  113 ms | add  33 ms
+//	10 MB: .   70 ms | .items   68 ms
 var e2eFilters = []string{
 	`.`,
 	`.items`,
@@ -39,45 +45,35 @@ func BenchmarkQueryToFrame(b *testing.B) {
 				b.Run(e2eSanitizeName(filter), func(b *testing.B) {
 					m := e2eNewModel(b, jqSvc)
 					m.setFilter(filter)
-					ctx := context.Background()
 
-					var outMB float64
 					var lines int
 
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
 						seq := i + 1
-						m.query.latest, m.query.active = seq, seq
+						m.query.latest = seq
 
-						// 1. evaluate (what startExecute's cmd does)
-						result := jqSvc.ExecuteWithContext(ctx, filter)
-						if result.Error != nil {
-							b.Fatalf("filter %q failed: %v", filter, result.Error)
+						// 1. dispatch + first screen (the query command)
+						cmd := m.startExecute(seq)
+						msg := cmd().(resultMsg)
+						if msg.err != nil || msg.snap.Err != nil {
+							b.Fatalf("filter %q failed: %v %v", filter, msg.err, msg.snap)
 						}
-						// 2. split and measure
-						ls, maxW := processResult(result)
-						// 3. prebuild highlight checkpoints
-						cps := prebuildCheckpoints(ls)
-						// 4. apply the result message on the UI goroutine
-						next, _ := m.Update(resultMsg{
-							seq:          seq,
-							result:       result,
-							filter:       filter,
-							lines:        ls,
-							maxLineWidth: maxW,
-							checkpoints:  cps,
-						})
+						// 2. apply on the UI goroutine
+						next, _ := m.Update(msg)
 						m = next.(Model)
-						// 5. full frame render
+						// 3. full frame render
 						_ = m.View()
 
-						outMB = float64(len(result.Raw)) / 1e6
-						lines = len(ls)
+						b.StopTimer()
+						lines, _ = m.result.lineCount()
+						m.query.stop() // cancel the background work
+						<-msg.collector.Done()
+						b.StartTimer()
 					}
 					b.StopTimer()
-					b.ReportMetric(outMB, "outMB")
-					b.ReportMetric(float64(lines), "lines")
+					b.ReportMetric(float64(lines), "firstScreenLines")
 				})
 			}
 		})
