@@ -14,7 +14,7 @@ type Service struct {
 
 // NewService creates a clipboard service, auto-detecting SSH
 func NewService() *Service {
-	useOSC52 := os.Getenv("SSH_CLIENT") != "" || os.Getenv("SSH_TTY") != ""
+	useOSC52 := os.Getenv("SSH_CLIENT") != "" || os.Getenv("SSH_TTY") != "" || os.Getenv("SSH_CONNECTION") != ""
 	return &Service{useOSC52: useOSC52}
 }
 
