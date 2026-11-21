@@ -1,0 +1,29 @@
+{
+  "maxNonTestLines": 150,
+  "maxTotalLines": 300,
+  "maxFiles": 5,
+  "testFileGlobs": ["**/*_test.go"],
+  "testDataGlobs": ["**/testdata/**"],
+  "testBuildCmd": "go test -run=^$ ./...",
+  "testCmd": "go test -race -count=1 ./...",
+  "baseTestRuns": 3,
+  "headTestRuns": 2,
+  "extraProtectedPaths": [
+    "go.mod",
+    "go.sum",
+    "go.work",
+    "go.work.sum",
+    "vendor/**",
+    "scripts/**",
+    "Makefile",
+    "GNUmakefile",
+    ".goreleaser*",
+    ".golangci*"
+  ],
+  "requiredChecks": [
+    "Gate",
+    "Test (ubuntu-latest)",
+    "Test (macos-latest)"
+  ],
+  "reviewRubric": "Pay close attention to UTF-8/rune vs byte slicing, Bubble Tea v2 model immutability, and cancellation safety in background goroutines."
+}
