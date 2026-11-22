@@ -309,16 +309,30 @@ func (m Model) overlayHistory(base string) string {
 	lines = append(lines, "")
 
 	maxShow := 10
-	for i, item := range m.historyItems {
-		if i >= maxShow {
-			lines = append(lines, helpStyle.Render(fmt.Sprintf("...+%d more", len(m.historyItems)-maxShow)))
-			break
-		}
+	// Reserve rows for overlay border (2), padding (2), header (3), and overflow marker (1).
+	const overlayChromeRows = 8
+	if m.height > 0 && m.height-overlayChromeRows < maxShow {
+		maxShow = max(1, m.height-overlayChromeRows)
+	}
+	start := 0
+	if m.historyIdx >= maxShow {
+		start = m.historyIdx - maxShow + 1
+	}
+	if maxStart := len(m.historyItems) - maxShow; maxStart > 0 && start > maxStart {
+		start = maxStart
+	} else if maxStart <= 0 {
+		start = 0
+	}
+	end := min(start+maxShow, len(m.historyItems))
+	for i := start; i < end; i++ {
 		if i == m.historyIdx {
-			lines = append(lines, selectedStyle.Render("→ "+item))
+			lines = append(lines, selectedStyle.Render("→ "+m.historyItems[i]))
 		} else {
-			lines = append(lines, suggestionStyle.Render("  "+item))
+			lines = append(lines, suggestionStyle.Render("  "+m.historyItems[i]))
 		}
+	}
+	if end < len(m.historyItems) {
+		lines = append(lines, helpStyle.Render(fmt.Sprintf("...+%d more", len(m.historyItems)-end)))
 	}
 
 	content := strings.Join(lines, "\n")
@@ -433,6 +447,10 @@ func placeOverlay(base, overlay string, width, height int) string {
 	}
 	if startX < 0 {
 		startX = 0
+	}
+
+	for len(baseLines) < height {
+		baseLines = append(baseLines, "")
 	}
 
 	for i, line := range overlayLines {
