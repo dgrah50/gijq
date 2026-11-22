@@ -36,7 +36,10 @@ func Parse(filter string) Context {
 		if workingFilter == "" || workingFilter == "." {
 			return Context{Path: ".", Incomplete: "", StartPos: offset + len(workingFilter)}
 		}
-		return Context{Path: ".", Incomplete: strings.TrimPrefix(workingFilter, "."), StartPos: offset + 1}
+		if trimmed, ok := strings.CutPrefix(workingFilter, "."); ok {
+			return Context{Path: ".", Incomplete: trimmed, StartPos: offset + 1}
+		}
+		return Context{Path: ".", Incomplete: workingFilter, StartPos: offset}
 	}
 
 	path := workingFilter[:lastDot]
