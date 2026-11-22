@@ -308,17 +308,37 @@ func (m Model) overlayHistory(base string) string {
 	lines = append(lines, helpStyle.Render("↑/↓: navigate | enter: select | esc: close"))
 	lines = append(lines, "")
 
+	selected := m.historyIdx
+	if selected < 0 {
+		selected = 0
+	} else if selected >= len(m.historyItems) {
+		selected = len(m.historyItems) - 1
+	}
 	maxShow := 10
-	for i, item := range m.historyItems {
-		if i >= maxShow {
-			lines = append(lines, helpStyle.Render(fmt.Sprintf("...+%d more", len(m.historyItems)-maxShow)))
-			break
-		}
-		if i == m.historyIdx {
-			lines = append(lines, selectedStyle.Render("→ "+item))
+	// The styled panel adds six rows (border and padding), and the header adds three.
+	// Keep one additional row available for the overflow marker when the list continues.
+	if m.height > 0 {
+		maxShow = min(maxShow, max(1, m.height-10))
+	}
+	start := 0
+	if selected >= maxShow {
+		start = selected - maxShow + 1
+	}
+	if maxStart := len(m.historyItems) - maxShow; maxStart > 0 && start > maxStart {
+		start = maxStart
+	} else if maxStart <= 0 {
+		start = 0
+	}
+	end := min(start+maxShow, len(m.historyItems))
+	for i := start; i < end; i++ {
+		if i == selected {
+			lines = append(lines, selectedStyle.Render("→ "+m.historyItems[i]))
 		} else {
-			lines = append(lines, suggestionStyle.Render("  "+item))
+			lines = append(lines, suggestionStyle.Render("  "+m.historyItems[i]))
 		}
+	}
+	if end < len(m.historyItems) {
+		lines = append(lines, helpStyle.Render(fmt.Sprintf("...+%d more", len(m.historyItems)-end)))
 	}
 
 	content := strings.Join(lines, "\n")
@@ -433,6 +453,10 @@ func placeOverlay(base, overlay string, width, height int) string {
 	}
 	if startX < 0 {
 		startX = 0
+	}
+
+	for len(baseLines) < height {
+		baseLines = append(baseLines, "")
 	}
 
 	for i, line := range overlayLines {
