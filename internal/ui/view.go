@@ -308,15 +308,21 @@ func (m Model) overlayHistory(base string) string {
 	lines = append(lines, helpStyle.Render("↑/↓: navigate | enter: select | esc: close"))
 	lines = append(lines, "")
 
+	selected := m.historyIdx
+	if selected < 0 {
+		selected = 0
+	} else if selected >= len(m.historyItems) {
+		selected = len(m.historyItems) - 1
+	}
 	maxShow := 10
-	// Reserve rows for overlay border (2), padding (2), header (3), and overflow marker (1).
-	const overlayChromeRows = 8
-	if m.height > 0 && m.height-overlayChromeRows < maxShow {
-		maxShow = max(1, m.height-overlayChromeRows)
+	// The styled panel adds six rows (border and padding), and the header adds three.
+	// Keep one additional row available for the overflow marker when the list continues.
+	if m.height > 0 {
+		maxShow = min(maxShow, max(1, m.height-10))
 	}
 	start := 0
-	if m.historyIdx >= maxShow {
-		start = m.historyIdx - maxShow + 1
+	if selected >= maxShow {
+		start = selected - maxShow + 1
 	}
 	if maxStart := len(m.historyItems) - maxShow; maxStart > 0 && start > maxStart {
 		start = maxStart
@@ -325,7 +331,7 @@ func (m Model) overlayHistory(base string) string {
 	}
 	end := min(start+maxShow, len(m.historyItems))
 	for i := start; i < end; i++ {
-		if i == m.historyIdx {
+		if i == selected {
 			lines = append(lines, selectedStyle.Render("→ "+m.historyItems[i]))
 		} else {
 			lines = append(lines, suggestionStyle.Render("  "+m.historyItems[i]))
