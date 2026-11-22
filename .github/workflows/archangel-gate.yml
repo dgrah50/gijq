@@ -10,7 +10,7 @@ permissions:
 env:
   ARCHANGEL_REPO: dgrah50/archangel
   # Pin to an immutable 40-char commit SHA of dgrah50/archangel (updated by `npm run pilot:setup -- --install-workflow`).
-  ARCHANGEL_GATE_SHA: 509fb917bab0536846c0ada0decbc58fbc46bcb5
+  ARCHANGEL_GATE_SHA: e5255acc4ff668150c68f6892f6f195736614ab2
 
 jobs:
   gate:
