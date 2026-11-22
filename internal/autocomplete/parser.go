@@ -20,7 +20,8 @@ func Parse(filter string) Context {
 
 	// Find the last segment to autocomplete
 	// Look for last pipe first (indicates new expression)
-	pipeIdx := findLastPipeOutsideString(filter)
+	code := jqCodeMask(filter)
+	pipeIdx := findLastPipeOutsideString(filter, code)
 	expression := filter
 	offset := 0
 	if pipeIdx >= 0 {
@@ -31,7 +32,7 @@ func Parse(filter string) Context {
 	workingFilter := strings.TrimSpace(expression)
 
 	// Find the last dot that starts a key
-	lastDot := findLastKeyDot(workingFilter)
+	lastDot := findLastKeyDot(workingFilter, code[offset:offset+len(workingFilter)])
 	if lastDot < 0 {
 		// No dot found, treat as incomplete from start
 		if workingFilter == "" || workingFilter == "." {
@@ -61,36 +62,66 @@ func Parse(filter string) Context {
 	}
 }
 
-func findLastPipeOutsideString(s string) int {
+func findLastPipeOutsideString(s string, code []bool) int {
 	lastPipe := -1
-	inString := false
-	escaped := false
 	for i := 0; i < len(s); i++ {
-		if inString {
-			if escaped {
-				escaped = false
-			} else if s[i] == '\\' {
-				escaped = true
-			} else if s[i] == '"' {
-				inString = false
-			}
-			continue
-		}
-		if s[i] == '"' {
-			inString = true
-		} else if s[i] == '|' {
+		if code[i] && s[i] == '|' {
 			lastPipe = i
 		}
 	}
 	return lastPipe
 }
 
+// jqCodeMask marks jq expressions, including expressions inside string interpolation.
+func jqCodeMask(s string) []bool {
+	type frame struct {
+		kind   byte // c: root code, s: string, i: interpolation code
+		parens int
+	}
+	mask := make([]bool, len(s))
+	stack := []frame{{kind: 'c'}}
+	for i := 0; i < len(s); i++ {
+		current := &stack[len(stack)-1]
+		if current.kind == 's' {
+			if s[i] == '\\' && i+1 < len(s) {
+				if s[i+1] == '(' {
+					stack = append(stack, frame{kind: 'i', parens: 1})
+					i++
+				} else {
+					i++
+				}
+			} else if s[i] == '"' {
+				stack = stack[:len(stack)-1]
+			}
+			continue
+		}
+		mask[i] = true
+		if s[i] == '"' {
+			stack = append(stack, frame{kind: 's'})
+		} else if current.kind == 'i' {
+			switch s[i] {
+			case '(':
+				current.parens++
+			case ')':
+				current.parens--
+				if current.parens == 0 {
+					stack = stack[:len(stack)-1]
+				}
+			}
+		}
+	}
+	return mask
+}
+
 // findLastKeyDot finds the last '.' that starts a key access
 // (not inside brackets)
-func findLastKeyDot(s string) int {
+func findLastKeyDot(s string, code []bool) int {
 	bracketDepth := 0
 
 	for i := len(s) - 1; i >= 0; i-- {
+		if !code[i] {
+			continue
+		}
 		switch s[i] {
 		case ']':
 			bracketDepth++
