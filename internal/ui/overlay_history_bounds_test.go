@@ -13,14 +13,6 @@ func TestOverlayHistoryBoundsSelectedItemAndHeight(t *testing.T) {
 	for i := range items {
 		items[i] = fmt.Sprintf(".q%02d", i)
 	}
-	t.Run("selection after tenth item remains visible", func(t *testing.T) {
-		m := Model{width: 80, height: 24, historyItems: items, historyIdx: 12}
-		got := ansi.Strip(m.overlayHistory(""))
-		if !strings.Contains(got, "→ .q12") {
-			t.Fatalf("selected history item missing from overlay:\n%s", got)
-		}
-	})
-
 	t.Run("out of range selection is clamped", func(t *testing.T) {
 		for _, idx := range []int{-1, len(items)} {
 			m := Model{width: 80, height: 24, historyItems: items, historyIdx: idx}

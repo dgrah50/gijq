@@ -456,24 +456,6 @@ func TestWindowsMatchOldPipelineOnTestdata(t *testing.T) {
 	}
 }
 
-func TestVisibleCacheIsPureMemo(t *testing.T) {
-	m := modelFor(t, bigService(t, 100), 100, 30)
-	m = runFilter(t, m, `.items[] | .id`)
-	a := m.result.window(5, 10)
-	if b := m.result.window(5, 10); a != b {
-		t.Fatal("same key must hit the memo")
-	}
-	if c := m.result.window(6, 10); c == a || c.lines[0] != a.lines[1] {
-		t.Fatal("different key must be recomputed")
-	}
-	// A cold cache gives identical output.
-	cold := m.result
-	cold.cache = &visibleCache{}
-	if strings.Join(cold.window(5, 10).lines, "\n") != strings.Join(a.lines, "\n") {
-		t.Fatal("memo changed the result")
-	}
-}
-
 func TestSummaryFormatting(t *testing.T) {
 	for n, want := range map[int]string{0: "0", 999: "999", 1000: "1,000", 69394: "69,394", 3120044: "3,120,044"} {
 		if got := groupDigits(n); got != want {

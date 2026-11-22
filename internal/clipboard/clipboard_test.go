@@ -18,14 +18,14 @@ func TestDetectSSH(t *testing.T) {
 	os.Unsetenv("SSH_CLIENT")
 	os.Unsetenv("SSH_TTY")
 	svc := NewService()
-	if svc.useOSC52 {
+	if svc.IsSSH() {
 		t.Error("expected useOSC52=false without SSH env vars")
 	}
 
 	// Test with SSH_CLIENT
 	os.Setenv("SSH_CLIENT", "192.168.1.1 12345 22")
 	svc = NewService()
-	if !svc.useOSC52 {
+	if !svc.IsSSH() {
 		t.Error("expected useOSC52=true with SSH_CLIENT")
 	}
 
@@ -33,7 +33,7 @@ func TestDetectSSH(t *testing.T) {
 	os.Unsetenv("SSH_CLIENT")
 	os.Setenv("SSH_TTY", "/dev/pts/0")
 	svc = NewService()
-	if !svc.useOSC52 {
+	if !svc.IsSSH() {
 		t.Error("expected useOSC52=true with SSH_TTY")
 	}
 }

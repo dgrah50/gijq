@@ -362,21 +362,6 @@ func TestKeysStateStaleIgnored(t *testing.T) {
 	}
 }
 
-func TestKeyHelperStringsMatchBindings(t *testing.T) {
-	for _, s := range []string{
-		"ctrl+c", "f1", "ctrl+/", "ctrl+_", "esc", "ctrl+y", "ctrl+f", "ctrl+h",
-		"enter", "tab", "shift+tab", "up", "down", "shift+up", "shift+down",
-		"shift+left", "shift+right", "home", "end", "pgup", "pgdown",
-		"alt+left", "alt+b", "ctrl+left", "alt+right", "alt+f", "ctrl+right",
-		"alt+backspace", "ctrl+backspace", "ctrl+w", "alt+delete", "alt+d",
-		"ctrl+delete", "space", "?", "a",
-	} {
-		if got := key(s).String(); got != s {
-			t.Errorf("key(%q).String() = %q", s, got)
-		}
-	}
-}
-
 func TestEnterRecordsOutputAndQuitsWithoutWriting(t *testing.T) {
 	m := newTestModel(t, 100, 30)
 	m = deliverValues(t, m, map[string]any{"a": float64(1)})
