@@ -50,5 +50,10 @@
   },
   "escalations": {
     "factoryRetry": "once"
+  },
+  "fleetScouts": {
+    "optOut": [
+      "fleet-pr-miner"
+    ]
   }
 }
