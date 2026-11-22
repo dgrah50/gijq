@@ -91,33 +91,48 @@ func findLastPipe(s string) int {
 // (not inside brackets, strings, or numeric literals).
 func findLastKeyDot(s string) int {
 	bracketDepth := 0
-	inString := false
-
-	for i := len(s) - 1; i >= 0; i-- {
-		switch s[i] {
-		case '"':
-			backslashes := 0
-			for j := i - 1; j >= 0 && s[j] == '\\'; j-- {
-				backslashes++
+	lastDot := -1
+	quoted := false
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quoted {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				quoted = false
 			}
-			if backslashes%2 == 0 {
-				inString = !inString
-			}
-		case ']':
-			if !inString {
-				bracketDepth++
-			}
+			continue
+		}
+		if c == '"' {
+			quoted = true
+			continue
+		}
+		switch c {
 		case '[':
-			if !inString {
-				bracketDepth--
-			}
+			bracketDepth++
+		case ']':
+			bracketDepth--
 		case '.':
-			if !inString && bracketDepth == 0 && !(i > 0 && i+1 < len(s) && s[i-1] >= '0' && s[i-1] <= '9' && s[i+1] >= '0' && s[i+1] <= '9') {
-				return i
+			if bracketDepth == 0 && !isNumberDot(s, i) {
+				lastDot = i
 			}
 		}
 	}
-	return -1
+	return lastDot
+}
+
+func isNumberDot(s string, i int) bool {
+	if i == 0 || s[i-1] < '0' || s[i-1] > '9' {
+		return false
+	}
+	return i == 1 || !isIdentifierByte(s[i-2])
+}
+
+func isIdentifierByte(c byte) bool {
+	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 func isLikelyPath(path string) bool {
@@ -129,7 +144,22 @@ func isLikelyPath(path string) bool {
 	}
 
 	depth := 0
+	quoted, escaped := false, false
 	for i := 0; i < len(path); i++ {
+		if quoted {
+			if escaped {
+				escaped = false
+			} else if path[i] == '\\' {
+				escaped = true
+			} else if path[i] == '"' {
+				quoted = false
+			}
+			continue
+		}
+		if path[i] == '"' {
+			quoted = true
+			continue
+		}
 		switch path[i] {
 		case '[':
 			depth++
