@@ -34,7 +34,7 @@ func (s *Service) SuggestWithContext(ctx context.Context, filter string) ([]stri
 	// If filter contains a pipe, resolve context from the left side's output
 	var keys []string
 	var err error
-	if pipeIdx := strings.LastIndex(filter, "|"); pipeIdx >= 0 {
+	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
 		leftSide := strings.TrimSpace(filter[:pipeIdx])
 		if leftSide != "" {
 			keys, err = s.resolveKeysAfterPipe(ctx, leftSide, pc.Path)
