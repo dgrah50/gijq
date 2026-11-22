@@ -5,6 +5,7 @@
   "testFileGlobs": ["**/*_test.go"],
   "testDataGlobs": ["**/testdata/**"],
   "testBuildCmd": "go test -run=^$ ./...",
+  "baseTestCmd": "go test -count=1 ./...",
   "testCmd": "go test -race -count=1 ./...",
   "baseTestRuns": 3,
   "headTestRuns": 2,

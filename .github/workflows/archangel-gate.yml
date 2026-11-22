@@ -10,7 +10,7 @@ permissions:
 env:
   ARCHANGEL_REPO: dgrah50/archangel
   # Pin to an immutable 40-char commit SHA of dgrah50/archangel (updated by `npm run pilot:setup -- --install-workflow`).
-  ARCHANGEL_GATE_SHA: db7b3324e08102aadf17ae1e895963352686b8b2
+  ARCHANGEL_GATE_SHA: 7a835ce7895692e3510c5f7bfa20de2a4e21dc41
 
 jobs:
   gate:
@@ -57,7 +57,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build pinned Archangel Gate CLI (scrubbing auth before PR tests run)
+      - name: Fetch pinned Archangel Gate bundle (zero npm ci, auth scrubbed before PR tests run)
         if: steps.classify.outputs.is_factory == 'true'
         env:
           ARCHANGEL_READ_TOKEN: ${{ secrets.ARCHANGEL_READ_TOKEN }}
@@ -78,7 +78,6 @@ jobs:
           git -C "$RUNNER_TEMP/archangel-src" checkout -q FETCH_HEAD
           # Remove .git immediately so no auth metadata or git config lingers while PR tests execute.
           rm -rf "$RUNNER_TEMP/archangel-src/.git"
-          (cd "$RUNNER_TEMP/archangel-src" && npm ci --no-audit --no-fund && npm run build)
 
       - name: Run Archangel Mechanical Gate (repo-owned .pre-commit-config.yaml + .agents/landing.json from base)
         if: steps.classify.outputs.is_factory == 'true'
@@ -98,7 +97,7 @@ jobs:
             fi
             EXTRA_ARGS+=(--revert-of "$REVERT_OF")
           fi
-          node "$RUNNER_TEMP/archangel-src/dist/cli/index.js" gate \
+          node "$RUNNER_TEMP/archangel-src/bin/archangel-gate.mjs" \
             --repo . \
             --base "$BASE_SHA" \
             --head HEAD \
