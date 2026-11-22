@@ -47,5 +47,8 @@
   ],
   "landing": {
     "bugfix": "autonomous"
+  },
+  "escalations": {
+    "factoryRetry": "once"
   }
 }
