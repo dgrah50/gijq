@@ -2,6 +2,7 @@ package autocomplete
 
 import (
 	"strings"
+	"unicode"
 )
 
 // Context represents the parsed autocomplete context
@@ -24,7 +25,8 @@ func Parse(filter string) Context {
 	offset := 0
 	if pipeIdx >= 0 {
 		workingFilter = strings.TrimSpace(filter[pipeIdx+1:])
-		offset = pipeIdx + 1 + (len(filter[pipeIdx+1:]) - len(strings.TrimSpace(filter[pipeIdx+1:])))
+		afterPipe := filter[pipeIdx+1:]
+		offset = pipeIdx + 1 + (len(afterPipe) - len(strings.TrimLeftFunc(afterPipe, unicode.IsSpace)))
 	}
 
 	// Find the last dot that starts a key
