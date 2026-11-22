@@ -21,13 +21,14 @@ func Parse(filter string) Context {
 	// Find the last segment to autocomplete
 	// Look for last pipe first (indicates new expression)
 	pipeIdx := strings.LastIndex(filter, "|")
-	workingFilter := filter
+	expression := filter
 	offset := 0
 	if pipeIdx >= 0 {
-		workingFilter = strings.TrimSpace(filter[pipeIdx+1:])
-		afterPipe := filter[pipeIdx+1:]
-		offset = pipeIdx + 1 + (len(afterPipe) - len(strings.TrimLeftFunc(afterPipe, unicode.IsSpace)))
+		expression = filter[pipeIdx+1:]
+		offset = pipeIdx + 1
 	}
+	offset += len(expression) - len(strings.TrimLeftFunc(expression, unicode.IsSpace))
+	workingFilter := strings.TrimSpace(expression)
 
 	// Find the last dot that starts a key
 	lastDot := findLastKeyDot(workingFilter)
