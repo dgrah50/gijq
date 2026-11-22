@@ -88,18 +88,31 @@ func findLastPipe(s string) int {
 }
 
 // findLastKeyDot finds the last '.' that starts a key access
-// (not inside brackets)
+// (not inside brackets, strings, or numeric literals).
 func findLastKeyDot(s string) int {
 	bracketDepth := 0
+	inString := false
 
 	for i := len(s) - 1; i >= 0; i-- {
 		switch s[i] {
+		case '"':
+			backslashes := 0
+			for j := i - 1; j >= 0 && s[j] == '\\'; j-- {
+				backslashes++
+			}
+			if backslashes%2 == 0 {
+				inString = !inString
+			}
 		case ']':
-			bracketDepth++
+			if !inString {
+				bracketDepth++
+			}
 		case '[':
-			bracketDepth--
+			if !inString {
+				bracketDepth--
+			}
 		case '.':
-			if bracketDepth == 0 {
+			if !inString && bracketDepth == 0 && !(i > 0 && i+1 < len(s) && s[i-1] >= '0' && s[i-1] <= '9' && s[i+1] >= '0' && s[i+1] <= '9') {
 				return i
 			}
 		}
