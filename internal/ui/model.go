@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -278,7 +279,28 @@ func (m Model) acContext() autocomplete.Context {
 
 // currentPath is the jq path whose keys the keys pane shows.
 func (m Model) currentPath() string {
-	if p := m.acContext().Path; p != "" {
+	ctx := m.acContext()
+	if p := ctx.Path; p != "" {
+		filter := m.filter.Value()
+		pipe, quote, escaped := -1, byte(0), false
+		for i := 0; i < len(filter); i++ {
+			if quote != 0 {
+				if escaped {
+					escaped = false
+				} else if filter[i] == '\\' {
+					escaped = true
+				} else if filter[i] == quote {
+					quote = 0
+				}
+			} else if filter[i] == '"' || filter[i] == '\'' {
+				quote = filter[i]
+			} else if filter[i] == '|' {
+				pipe = i
+			}
+		}
+		if pipe >= 0 {
+			return strings.TrimSpace(filter[:pipe]) + " | " + p
+		}
 		return p
 	}
 	return "."
@@ -317,11 +339,10 @@ func (m *Model) fetchKeysIfNeeded() tea.Cmd {
 }
 
 func (m Model) fetchKeys(path string) tea.Cmd {
-	acSvc := m.autocomplete
-	filter := m.filter.Value()
+	jqSvc := m.jq
 	return func() tea.Msg {
-		keys, _ := acSvc.Suggest(filter)
-		return keysMsg{path: path, keys: keys}
+		keys, err := jqSvc.KeysAt(path)
+		return keysMsg{path: path, keys: keys, err: err}
 	}
 }
 
