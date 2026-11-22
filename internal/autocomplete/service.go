@@ -2,7 +2,10 @@ package autocomplete
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/dayangraham/gijq/internal/jq"
 )
@@ -89,5 +92,25 @@ func (s *Service) resolveKeysAfterPipe(ctx context.Context, leftSide string, rig
 
 // Apply inserts the selected suggestion into the filter
 func (s *Service) Apply(filter string, ctx Context, selected string) string {
+	if !isJQIdentifier(selected) {
+		quoted, _ := json.Marshal(selected)
+		selected = string(quoted)
+	}
 	return filter[:ctx.StartPos] + selected
+}
+
+func isJQIdentifier(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, r := range key {
+		if i == 0 {
+			if !unicode.IsLetter(r) && r != '_' {
+				return false
+			}
+		} else if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+			return false
+		}
+	}
+	return utf8.ValidString(key)
 }
