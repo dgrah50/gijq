@@ -13,7 +13,7 @@ permissions:
 env:
   ARCHANGEL_REPO: dgrah50/archangel
   # Pin to an immutable 40-char commit SHA of dgrah50/archangel.
-  ARCHANGEL_GATE_SHA: ae256ca23f967bc1dd16c93d0fc9a900b9e6f534
+  ARCHANGEL_GATE_SHA: cf1f4241759a21385d2b81c6c12578e1e45afe9a
 
 jobs:
   gate:
