@@ -317,10 +317,11 @@ func (m *Model) fetchKeysIfNeeded() tea.Cmd {
 }
 
 func (m Model) fetchKeys(path string) tea.Cmd {
-	jqSvc := m.jq
+	acSvc := m.autocomplete
+	filter := m.filter.Value()
 	return func() tea.Msg {
-		keys, err := jqSvc.KeysAt(path)
-		return keysMsg{path: path, keys: keys, err: err}
+		keys, _ := acSvc.Suggest(filter)
+		return keysMsg{path: path, keys: keys}
 	}
 }
 
