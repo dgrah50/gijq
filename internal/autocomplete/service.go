@@ -1,10 +1,10 @@
 package autocomplete
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/dayangraham/gijq/internal/jq"
@@ -92,25 +92,51 @@ func (s *Service) resolveKeysAfterPipe(ctx context.Context, leftSide string, rig
 
 // Apply inserts the selected suggestion into the filter
 func (s *Service) Apply(filter string, ctx Context, selected string) string {
-	if !isJQIdentifier(selected) {
-		quoted, _ := json.Marshal(selected)
-		selected = string(quoted)
+	prefix := filter[:ctx.StartPos]
+	if isArrayHint(selected) {
+		prefix = strings.TrimSuffix(prefix, ".")
+	} else if !isJQIdentifier(selected) && utf8.ValidString(selected) && (strings.HasSuffix(prefix, ".") || strings.HasSuffix(strings.TrimSpace(prefix), "|")) {
+		if !strings.HasSuffix(prefix, ".") {
+			prefix += "."
+		}
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(selected); err != nil {
+			panic(err)
+		}
+		selected = strings.TrimSuffix(buf.String(), "\n")
 	}
-	return filter[:ctx.StartPos] + selected
+	return prefix + selected
+}
+
+func isArrayHint(key string) bool {
+	if len(key) < 3 || key[0] != '[' || key[len(key)-1] != ']' {
+		return false
+	}
+	for _, b := range key[1 : len(key)-1] {
+		if b < '0' || b > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func isJQIdentifier(key string) bool {
 	if key == "" {
 		return false
 	}
-	for i, r := range key {
+	for i := 0; i < len(key); i++ {
+		b := key[i]
 		if i == 0 {
-			if !unicode.IsLetter(r) && r != '_' {
+			if !isASCIIAlpha(b) && b != '_' {
 				return false
 			}
-		} else if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+		} else if !isASCIIAlpha(b) && (b < '0' || b > '9') && b != '_' {
 			return false
 		}
 	}
-	return utf8.ValidString(key)
+	return true
 }
+
+func isASCIIAlpha(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' }
