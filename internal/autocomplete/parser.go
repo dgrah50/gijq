@@ -20,7 +20,7 @@ func Parse(filter string) Context {
 
 	// Find the last segment to autocomplete
 	// Look for last pipe first (indicates new expression)
-	pipeIdx := strings.LastIndex(filter, "|")
+	pipeIdx := findLastPipeOutsideString(filter)
 	expression := filter
 	offset := 0
 	if pipeIdx >= 0 {
@@ -59,6 +59,30 @@ func Parse(filter string) Context {
 		Incomplete: incomplete,
 		StartPos:   offset + lastDot + 1,
 	}
+}
+
+func findLastPipeOutsideString(s string) int {
+	lastPipe := -1
+	inString := false
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		if inString {
+			if escaped {
+				escaped = false
+			} else if s[i] == '\\' {
+				escaped = true
+			} else if s[i] == '"' {
+				inString = false
+			}
+			continue
+		}
+		if s[i] == '"' {
+			inString = true
+		} else if s[i] == '|' {
+			lastPipe = i
+		}
+	}
+	return lastPipe
 }
 
 // findLastKeyDot finds the last '.' that starts a key access
