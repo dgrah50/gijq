@@ -40,6 +40,9 @@ func NewStore(path string) (*Store, error) {
 		return &Store{entries: make(map[string][]string)},
 			fmt.Errorf("history %s unusable, not saving this session: %w", path, err)
 	}
+	if s.entries == nil {
+		s.entries = make(map[string][]string)
+	}
 	return s, nil
 }
 
