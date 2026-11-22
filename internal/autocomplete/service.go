@@ -1,11 +1,9 @@
 package autocomplete
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/dayangraham/gijq/internal/jq"
 )
@@ -93,33 +91,32 @@ func (s *Service) resolveKeysAfterPipe(ctx context.Context, leftSide string, rig
 // Apply inserts the selected suggestion into the filter
 func (s *Service) Apply(filter string, ctx Context, selected string) string {
 	prefix := filter[:ctx.StartPos]
-	if isArrayHint(selected) {
-		prefix = strings.TrimSuffix(prefix, ".")
-	} else if !isJQIdentifier(selected) && utf8.ValidString(selected) && (strings.HasSuffix(prefix, ".") || strings.HasSuffix(strings.TrimSpace(prefix), "|")) {
-		if !strings.HasSuffix(prefix, ".") {
-			prefix += "."
-		}
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(selected); err != nil {
-			panic(err)
-		}
-		selected = strings.TrimSuffix(buf.String(), "\n")
+	if ctx.StartPos > 0 && filter[ctx.StartPos-1] == '.' && selected != "" && selected[0] != '[' && !isJQIdentifier(selected) {
+		return prefix + quoteJQKey(selected)
 	}
 	return prefix + selected
 }
 
-func isArrayHint(key string) bool {
-	if len(key) < 3 || key[0] != '[' || key[len(key)-1] != ']' {
-		return false
-	}
-	for _, b := range key[1 : len(key)-1] {
-		if b < '0' || b > '9' {
-			return false
+func quoteJQKey(key string) string {
+	var quoted strings.Builder
+	quoted.Grow(len(key) + 2)
+	quoted.WriteByte('"')
+	for i := 0; i < len(key); i++ {
+		b := key[i]
+		switch b {
+		case '\\', '"':
+			quoted.WriteByte('\\')
+			quoted.WriteByte(b)
+		default:
+			if b < 0x20 {
+				fmt.Fprintf(&quoted, "\\u%04X", b)
+			} else {
+				quoted.WriteByte(b)
+			}
 		}
 	}
-	return true
+	quoted.WriteByte('"')
+	return quoted.String()
 }
 
 func isJQIdentifier(key string) bool {
