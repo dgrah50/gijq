@@ -223,18 +223,25 @@ func fitToWidth(rows []string, i, width int) string {
 
 func (m Model) renderSuggestions() []string {
 	if m.mode == ModeAutocomplete && len(m.suggestions) > 0 {
-		var lines []string
-		lines = append(lines, labelStyle.Render("Keys:"))
-		for i, s := range m.suggestions {
+		lines := []string{labelStyle.Render("Keys:")}
+		visible := m.contentHeight() - 2 // Reserve rows for the label and overflow marker.
+		if visible < 1 {
+			visible = 1
+		}
+		start := 0
+		if m.selectedIdx >= visible {
+			start = m.selectedIdx - visible + 1
+		}
+		end := min(start+visible, len(m.suggestions))
+		for i := start; i < end; i++ {
 			if i == m.selectedIdx {
-				lines = append(lines, selectedStyle.Render("→ "+s))
+				lines = append(lines, selectedStyle.Render("→ "+m.suggestions[i]))
 			} else {
-				lines = append(lines, suggestionStyle.Render("  "+s))
+				lines = append(lines, suggestionStyle.Render("  "+m.suggestions[i]))
 			}
-			if i >= m.contentHeight()-2 {
-				lines = append(lines, helpStyle.Render(fmt.Sprintf("  ...+%d more", len(m.suggestions)-i-1)))
-				break
-			}
+		}
+		if end < len(m.suggestions) {
+			lines = append(lines, helpStyle.Render(fmt.Sprintf("  ...+%d more", len(m.suggestions)-end)))
 		}
 		return lines
 	}
