@@ -13,7 +13,7 @@ permissions:
 env:
   ARCHANGEL_REPO: dgrah50/archangel
   # Pin to an immutable 40-char commit SHA of dgrah50/archangel.
-  ARCHANGEL_GATE_SHA: b6ebda15ada0e13050571d7d2eff13a7ae3b7fea
+  ARCHANGEL_GATE_SHA: 6607a37d36ea44b0d237f0803b0e74ff23e60b8a
 
 jobs:
   gate:
@@ -75,17 +75,31 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Setup Node dependencies (when target repository has package-lock.json)
-        if: steps.classify.outputs.is_factory == 'true' && hashFiles('package-lock.json') != ''
+      - name: Setup Bun (when target repository has bun.lock)
+        if: steps.classify.outputs.is_factory == 'true' && hashFiles('bun.lock') != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.5"
+
+      - name: Setup Node dependencies (when target repository has bun.lock or package-lock.json)
+        if: steps.classify.outputs.is_factory == 'true' && (hashFiles('bun.lock') != '' || hashFiles('package-lock.json') != '')
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           # Never execute untrusted PR package.json lifecycle scripts; fail closed if package manifests changed.
-          git diff --quiet "$BASE_SHA" HEAD -- package.json package-lock.json || {
-            echo "ERROR: package.json or package-lock.json modified on factory PR" >&2
-            exit 1
-          }
-          npm ci --no-audit
+          if [ -f bun.lock ]; then
+            git diff --quiet "$BASE_SHA" HEAD -- package.json bun.lock || {
+              echo "ERROR: package.json or bun.lock modified on factory PR" >&2
+              exit 1
+            }
+            bun install --frozen-lockfile
+          else
+            git diff --quiet "$BASE_SHA" HEAD -- package.json package-lock.json || {
+              echo "ERROR: package.json or package-lock.json modified on factory PR" >&2
+              exit 1
+            }
+            npm ci --no-audit
+          fi
 
       - name: Fetch pinned Archangel Gate bundle (zero npm ci, auth scrubbed before PR tests run)
         if: steps.classify.outputs.is_factory == 'true'
