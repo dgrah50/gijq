@@ -2,10 +2,14 @@ package autocomplete
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"github.com/dayangraham/gijq/internal/jq"
 )
+
+var identifierKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var arrayIndexHint = regexp.MustCompile(`^\[[0-9]*\]$`)
 
 // Service provides autocomplete suggestions
 type Service struct {
@@ -89,5 +93,39 @@ func (s *Service) resolveKeysAfterPipe(ctx context.Context, leftSide string, rig
 
 // Apply inserts the selected suggestion into the filter
 func (s *Service) Apply(filter string, ctx Context, selected string) string {
+	if strings.HasSuffix(filter[:ctx.StartPos], ".") &&
+		!arrayIndexHint.MatchString(selected) && !identifierKey.MatchString(selected) {
+		selected = `"` + escapeJQKey(selected) + `"`
+	}
 	return filter[:ctx.StartPos] + selected
+}
+
+func escapeJQKey(key string) string {
+	var escaped strings.Builder
+	for i := 0; i < len(key); i++ {
+		switch c := key[i]; c {
+		case '\\', '"':
+			escaped.WriteByte('\\')
+			escaped.WriteByte(c)
+		case '\b':
+			escaped.WriteString(`\b`)
+		case '\f':
+			escaped.WriteString(`\f`)
+		case '\n':
+			escaped.WriteString(`\n`)
+		case '\r':
+			escaped.WriteString(`\r`)
+		case '\t':
+			escaped.WriteString(`\t`)
+		default:
+			if c < 0x20 {
+				escaped.WriteString(`\u00`)
+				escaped.WriteByte("0123456789abcdef"[c>>4])
+				escaped.WriteByte("0123456789abcdef"[c&0x0f])
+			} else {
+				escaped.WriteByte(c)
+			}
+		}
+	}
+	return escaped.String()
 }
