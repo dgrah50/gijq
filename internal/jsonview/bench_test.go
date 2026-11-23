@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/dayangraham/gijq/internal/jsontest"
 	"strings"
 	"sync"
 	"testing"
@@ -72,14 +73,14 @@ const screen = 50
 func BenchmarkReferenceFormatRoot(b *testing.B) {
 	benchSetup(b)
 	for i := 0; i < b.N; i++ {
-		_ = referenceFormat(benchRoot)
+		_ = jsontest.ReferenceFormat(benchRoot)
 	}
 }
 
 func BenchmarkReferenceFormatItems(b *testing.B) {
 	benchSetup(b)
 	for i := 0; i < b.N; i++ {
-		_ = referenceFormat(benchItem)
+		_ = jsontest.ReferenceFormat(benchItem)
 	}
 }
 
@@ -176,7 +177,7 @@ func BenchmarkStreamDrainAndReferenceFormat(b *testing.B) {
 	code := benchQuery(b)
 	for i := 0; i < b.N; i++ {
 		vals, _ := drain(code.run(context.Background(), benchData))
-		_ = referenceFormat(vals)
+		_ = jsontest.ReferenceFormat(vals)
 	}
 }
 

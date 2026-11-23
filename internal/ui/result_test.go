@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/dayangraham/gijq/internal/clipboard"
 	"github.com/dayangraham/gijq/internal/history"
 	"github.com/dayangraham/gijq/internal/jq"
+	"github.com/dayangraham/gijq/internal/jsontest"
 	"github.com/dayangraham/gijq/internal/jsonview"
 )
 
@@ -229,10 +231,7 @@ func TestEnterWhileStreamingOrStaleOutputsFullResult(t *testing.T) {
 	svc := bigService(t, 30000)
 	filters := []string{`.`, `.items`, `.items[0]`, `.items[] | select(.status == "ok") | .id`, `.items[] | {id, s: .status}`}
 	for _, f := range filters {
-		want := svc.Execute(f)
-		if want.Error != nil {
-			t.Fatal(want.Error)
-		}
+		want := referenceResult(t, svc, f)
 		for _, mode := range []string{"streaming", "stale", "complete"} {
 			t.Run(mode+"/"+f, func(t *testing.T) {
 				m := modelFor(t, svc, 100, 30)
@@ -248,8 +247,8 @@ func TestEnterWhileStreamingOrStaleOutputsFullResult(t *testing.T) {
 				next, cmd := m.Update(key("enter"))
 				got := next.(Model)
 				out, ok := outputText(t, got)
-				if !ok || out != want.Raw {
-					t.Fatalf("output differs from Execute (%d vs %d bytes, ok=%v)", len(out), len(want.Raw), ok)
+				if !ok || out != want {
+					t.Fatalf("output differs from Execute (%d vs %d bytes, ok=%v)", len(out), len(want), ok)
 				}
 				if got.query.phase != queryIdle {
 					t.Fatalf("query still in flight after Enter: %v", got.query.phase)
@@ -275,7 +274,7 @@ func TestCopyTextIsFullResult(t *testing.T) {
 	}
 	// While streaming, copy evaluates the full result rather than copying
 	// the partial one, and leaves the background query running.
-	if text, problem := m.resultText(); problem != "" || text != svc.Execute(f).Raw {
+	if text, problem := m.resultText(); problem != "" || text != referenceResult(t, svc, f) {
 		t.Fatalf("copy while streaming: problem=%q len=%d", problem, len(text))
 	}
 	if !m.query.running() {
@@ -283,7 +282,7 @@ func TestCopyTextIsFullResult(t *testing.T) {
 	}
 	m = runFilter(t, m, f)
 	text, problem := m.resultText()
-	if problem != "" || text != svc.Execute(f).Raw {
+	if problem != "" || text != referenceResult(t, svc, f) {
 		t.Fatalf("copy text differs: problem=%q len=%d", problem, len(text))
 	}
 	m = runFilter(t, m, `empty`)
@@ -420,13 +419,10 @@ func TestWindowsMatchOldPipelineOnTestdata(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, f := range []string{`.`, `..`, `[.. | scalars]`, `.. | strings`, `[paths]`} {
-			res := svc.Execute(f)
-			if res.Error != nil {
-				t.Fatal(res.Error)
-			}
+			res := referenceResult(t, svc, f)
 			var want []string
-			if res.Raw != "" {
-				want = strings.Split(res.Raw, "\n")
+			if res != "" {
+				want = strings.Split(res, "\n")
 			}
 			m := runFilter(t, modelFor(t, svc, 120, 20), f)
 			if n, exact := m.result.lineCount(); n != len(want) || !exact {
@@ -509,4 +505,13 @@ func TestNaNAndInfRender(t *testing.T) {
 	if problem != "" || !strings.Contains(text, "null") || !strings.Contains(text, "1.7976931348623157e+308") {
 		t.Fatalf("text = %q problem=%q", text, problem)
 	}
+}
+
+func referenceResult(t testing.TB, svc *jq.Service, filter string) string {
+	t.Helper()
+	result, err := jsontest.RunAndFormat(context.Background(), svc, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }

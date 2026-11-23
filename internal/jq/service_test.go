@@ -3,6 +3,7 @@ package jq
 import (
 	"context"
 	"errors"
+	"github.com/dayangraham/gijq/internal/jsontest"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,18 +58,18 @@ func TestExecute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := svc.Execute(tt.filter)
+			raw, runErr := jsontest.RunAndFormat(context.Background(), svc, tt.filter)
 			if tt.wantErr {
-				if result.Error == nil {
+				if runErr == nil {
 					t.Error("expected error, got nil")
 				}
 				return
 			}
-			if result.Error != nil {
-				t.Errorf("unexpected error: %v", result.Error)
+			if runErr != nil {
+				t.Errorf("unexpected error: %v", runErr)
 				return
 			}
-			got := strings.TrimSpace(result.Raw)
+			got := strings.TrimSpace(raw)
 			// Use wantContain for content checks, wantRaw for exact matches
 			if tt.wantContain != "" {
 				if !strings.Contains(got, tt.wantContain) {
@@ -135,20 +136,20 @@ func equalSlices(a, b []string) bool {
 
 func TestExecuteNoHTMLEscape(t *testing.T) {
 	svc, _ := NewService([]byte(`{"s":"<a&b>"}`))
-	r := svc.Execute(".s")
-	if r.Error != nil || r.Raw != `"<a&b>"` {
-		t.Fatalf("got %q err=%v", r.Raw, r.Error)
+	raw, err := jsontest.RunAndFormat(context.Background(), svc, ".s")
+	if err != nil || raw != `"<a&b>"` {
+		t.Fatalf("got %q err=%v", raw, err)
 	}
 }
 
 func TestExecuteMultiResultFormat(t *testing.T) {
 	svc, _ := NewService([]byte(`[1,2]`))
-	if r := svc.Execute(".[]"); r.Raw != "1\n2" {
-		t.Fatalf("got %q", r.Raw)
+	if raw, err := jsontest.RunAndFormat(context.Background(), svc, ".[]"); err != nil || raw != "1\n2" {
+		t.Fatalf("got %q err=%v", raw, err)
 	}
 	svc2, _ := NewService([]byte(`{"a":[1]}`))
-	if r := svc2.Execute("."); r.Raw != "{\n  \"a\": [\n    1\n  ]\n}" {
-		t.Fatalf("got %q", r.Raw)
+	if raw, err := jsontest.RunAndFormat(context.Background(), svc2, "."); err != nil || raw != "{\n  \"a\": [\n    1\n  ]\n}" {
+		t.Fatalf("got %q err=%v", raw, err)
 	}
 }
 
@@ -156,8 +157,8 @@ func TestExecuteCanceledContext(t *testing.T) {
 	svc, _ := NewService([]byte(`[1,2]`))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if r := svc.ExecuteWithContext(ctx, ".[]"); !errors.Is(r.Error, context.Canceled) {
-		t.Fatalf("got %v", r.Error)
+	if _, err := jsontest.RunAndFormat(ctx, svc, ".[]"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
 	}
 }
 
@@ -186,7 +187,7 @@ func TestServiceCachesBounded(t *testing.T) {
 	for i := 0; i < cacheCap*2; i++ {
 		f := ". + " + strconv.Itoa(i)
 		svc.KeysAt(f)
-		svc.Execute(f)
+		jsontest.RunAndFormat(context.Background(), svc, f)
 	}
 	if svc.codeCache.Len() > cacheCap || svc.keysCache.Len() > cacheCap {
 		t.Fatalf("caches exceed cap: %d %d", svc.codeCache.Len(), svc.keysCache.Len())
@@ -217,7 +218,7 @@ func TestKeysAtConcurrent(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 300; j++ {
 				svc.KeysAt(".a" + strconv.Itoa(j))
-				svc.Execute(".a")
+				jsontest.RunAndFormat(context.Background(), svc, ".a")
 			}
 		}()
 	}

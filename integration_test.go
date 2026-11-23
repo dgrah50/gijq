@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/dayangraham/gijq/internal/autocomplete"
 	"github.com/dayangraham/gijq/internal/jq"
+	"github.com/dayangraham/gijq/internal/jsontest"
 )
 
 func TestFullPipeline(t *testing.T) {
@@ -30,12 +32,12 @@ func TestFullPipeline(t *testing.T) {
 
 	// Test jq execution
 	t.Run("execute filter", func(t *testing.T) {
-		result := jqSvc.Execute(".users[0].name")
-		if result.Error != nil {
-			t.Fatalf("Execute failed: %v", result.Error)
+		raw, runErr := jsontest.RunAndFormat(context.Background(), jqSvc, ".users[0].name")
+		if runErr != nil {
+			t.Fatalf("Execute failed: %v", runErr)
 		}
-		if !strings.Contains(result.Raw, "alice") {
-			t.Errorf("expected 'alice' in result, got %s", result.Raw)
+		if !strings.Contains(raw, "alice") {
+			t.Errorf("expected 'alice' in result, got %s", raw)
 		}
 	})
 
@@ -79,9 +81,9 @@ func TestFullPipeline(t *testing.T) {
 		}
 
 		// Execute
-		result := jqSvc.Execute(filter)
-		if result.Error != nil {
-			t.Fatalf("Execute failed: %v", result.Error)
+		_, runErr := jsontest.RunAndFormat(context.Background(), jqSvc, filter)
+		if runErr != nil {
+			t.Fatalf("Execute failed: %v", runErr)
 		}
 
 		// Continue to array element

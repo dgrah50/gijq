@@ -1,7 +1,6 @@
 package jq
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,12 +11,6 @@ import (
 
 	"github.com/itchyny/gojq"
 )
-
-// Result holds both display and raw output from jq execution
-type Result struct {
-	Raw   string // Plain text for display and clipboard
-	Error error
-}
 
 // Service wraps gojq for executing jq filters
 type Service struct {
@@ -46,44 +39,6 @@ func NewService(jsonData []byte) (*Service, error) {
 	}, nil
 }
 
-// Execute runs a jq filter and returns the result
-func (s *Service) Execute(filter string) Result {
-	return s.ExecuteWithContext(context.Background(), filter)
-}
-
-// ExecuteWithContext runs a jq filter and supports cancellation.
-func (s *Service) ExecuteWithContext(ctx context.Context, filter string) Result {
-	code, err := s.compiledQuery(filter)
-	if err != nil {
-		return Result{Error: err}
-	}
-
-	var results []any
-	iter := code.RunWithContext(ctx, s.data)
-	for {
-		v, ok := iter.Next()
-		if !ok {
-			break
-		}
-		if ctx.Err() != nil {
-			return Result{Error: ctx.Err()}
-		}
-		if err, isErr := v.(error); isErr {
-			return Result{Error: err}
-		}
-		results = append(results, v)
-	}
-	if err := ctx.Err(); err != nil {
-		return Result{Error: err}
-	}
-
-	raw, err := formatResults(ctx, results)
-	if err != nil {
-		return Result{Error: err}
-	}
-	return Result{Raw: raw}
-}
-
 // Iter compiles filter (through the code cache) and starts it on the parsed
 // input. The caller drains the iterator; error values come out of Next as
 // error values. Cancelling ctx stops the evaluation.
@@ -93,37 +48,6 @@ func (s *Service) Iter(ctx context.Context, filter string) (gojq.Iter, error) {
 		return nil, err
 	}
 	return code.RunWithContext(ctx, s.data), nil
-}
-
-func formatResults(ctx context.Context, results []any) (string, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "  ")
-	enc.SetEscapeHTML(false)
-	for i, r := range results {
-		if i&255 == 255 {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		if i > 0 {
-			buf.WriteByte('\n')
-		}
-		start := buf.Len()
-		if err := enc.Encode(r); err != nil {
-			buf.Truncate(start)
-			fmt.Fprintf(&buf, "%v", r)
-			continue
-		}
-		// Encode appends a trailing newline; drop it.
-		buf.Truncate(buf.Len() - 1)
-	}
-	return buf.String(), nil
-}
-
-// Data returns the parsed JSON data (for autocomplete)
-func (s *Service) Data() any {
-	return s.data
 }
 
 // KeysAt returns available keys at the given jq path
