@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -274,32 +273,22 @@ type statusClearMsg struct{ seq int }
 
 // acContext is the autocomplete context of the current filter text.
 func (m Model) acContext() autocomplete.Context {
-	return m.autocomplete.ParseContext(m.filter.Value())
+	value := []rune(m.filter.Value())
+	position := m.filter.Position()
+	if position < 0 {
+		position = 0
+	} else if position > len(value) {
+		position = len(value)
+	}
+	return m.autocomplete.ParseContext(string(value[:position]))
 }
 
 // currentPath is the jq path whose keys the keys pane shows.
 func (m Model) currentPath() string {
 	ctx := m.acContext()
 	if p := ctx.Path; p != "" {
-		filter := m.filter.Value()
-		pipe, quote, escaped := -1, byte(0), false
-		for i := 0; i < len(filter); i++ {
-			if quote != 0 {
-				if escaped {
-					escaped = false
-				} else if filter[i] == '\\' {
-					escaped = true
-				} else if filter[i] == quote {
-					quote = 0
-				}
-			} else if filter[i] == '"' || filter[i] == '\'' {
-				quote = filter[i]
-			} else if filter[i] == '|' {
-				pipe = i
-			}
-		}
-		if pipe >= 0 {
-			return strings.TrimSpace(filter[:pipe]) + " | " + p
+		if ctx.PipePrefix != "" {
+			return ctx.PipePrefix + " | " + p
 		}
 		return p
 	}

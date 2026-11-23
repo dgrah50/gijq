@@ -10,6 +10,7 @@ type Context struct {
 	Path       string // Valid jq path prefix
 	Incomplete string // Partial key being typed
 	StartPos   int    // Where incomplete begins in filter
+	PipePrefix string // Expression before the active pipe, if any
 }
 
 // Parse extracts autocomplete context from a filter string
@@ -54,10 +55,15 @@ func Parse(filter string) Context {
 		return Context{Path: ".", Incomplete: workingFilter, StartPos: offset}
 	}
 
+	pipePrefix := ""
+	if pipeIdx >= 0 {
+		pipePrefix = strings.TrimSpace(filter[:pipeIdx])
+	}
 	return Context{
 		Path:       path,
 		Incomplete: incomplete,
 		StartPos:   offset + lastDot + 1,
+		PipePrefix: pipePrefix,
 	}
 }
 
@@ -78,9 +84,9 @@ func findLastPipe(s string) int {
 			}
 			continue
 		}
-		if c == '"' || c == '\'' {
+		if c == '"' {
 			quote = c
-		} else if c == '|' {
+		} else if c == '|' && (i+1 == len(s) || s[i+1] != '=') {
 			lastPipe = i
 		}
 	}
