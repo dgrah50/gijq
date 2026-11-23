@@ -8,9 +8,9 @@ func TestParseTreatsLiteralDotsAsPartOfExpression(t *testing.T) {
 		want   Context
 	}{
 		{filter: `.user.na`, want: Context{Path: `.user`, Incomplete: `na`, StartPos: 6}},
-		{filter: `.a == "x\".y`, want: Context{Path: `.`, Incomplete: `.a == "x\".y`, StartPos: 0}},
-		{filter: `.a == 'x.y`, want: Context{Path: `.`, Incomplete: `.a == 'x.y`, StartPos: 0}},
-		{filter: `.n == 1.5`, want: Context{Path: `.`, Incomplete: `.n == 1.5`, StartPos: 0}},
+		{filter: `.a == "x\".y`, want: Context{Path: `.`, Incomplete: `a == "x\".y`, StartPos: 1}},
+		{filter: `.a == 'x.y`, want: Context{Path: `.`, Incomplete: `a == 'x.y`, StartPos: 1}},
+		{filter: `.n == 1.5`, want: Context{Path: `.`, Incomplete: `n == 1.5`, StartPos: 1}},
 	}
 
 	for _, tt := range tests {

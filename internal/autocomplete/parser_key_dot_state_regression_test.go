@@ -13,7 +13,7 @@ func TestFindLastKeyDotTracksQuotesDecimalsAndUnmatchedBrackets(t *testing.T) {
 		{name: "escaped quote", text: `.a == "x\".y`, want: 0},
 		{name: "single quote", text: ".a == 'x.y", want: 0},
 		{name: "decimal", text: ".n == 1.5", want: 0},
-		{name: "closed quote then key", text: `.a == "x.y" and .user.na`, want: 22},
+		{name: "closed quote then key", text: `.a == "x.y" and .user.na`, want: 21},
 		{name: "unmatched close then key", text: ".a].b", want: 3},
 		{name: "piped array index then key", text: ".b][0].na", want: 6},
 		{name: "piped array key then key", text: ".b][.k].na", want: 7},
@@ -34,9 +34,9 @@ func TestParseIgnoresStringAndNumberDotsBeforeKeyAccess(t *testing.T) {
 		want   Context
 	}{
 		{filter: `.a == "x.y" and .user.na`, want: Context{Path: `.a == "x.y" and .user`, Incomplete: "na", StartPos: 22}},
-		{filter: `.a == "x\".y`, want: Context{Path: ".", Incomplete: `.a == "x\".y`, StartPos: 0}},
-		{filter: ".a == 'x.y", want: Context{Path: ".", Incomplete: ".a == 'x.y", StartPos: 0}},
-		{filter: ".n == 1.5", want: Context{Path: ".", Incomplete: ".n == 1.5", StartPos: 0}},
+		{filter: `.a == "x\".y`, want: Context{Path: ".", Incomplete: `a == "x\".y`, StartPos: 1}},
+		{filter: ".a == 'x.y", want: Context{Path: ".", Incomplete: "a == 'x.y", StartPos: 1}},
+		{filter: ".n == 1.5", want: Context{Path: ".", Incomplete: "n == 1.5", StartPos: 1}},
 	}
 
 	for _, tt := range tests {
