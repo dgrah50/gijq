@@ -63,37 +63,18 @@ func Parse(filter string) Context {
 
 // findLastPipe returns the last pipe outside a quoted string.
 func findLastPipe(s string) int {
-	quote := byte(0)
-	escaped := false
 	lastPipe := -1
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if quote != 0 {
-			if escaped {
-				escaped = false
-			} else if c == '\\' {
-				escaped = true
-			} else if c == quote {
-				quote = 0
-			}
-			continue
-		}
-		if c == '"' || c == '\'' {
-			quote = c
-		} else if c == '|' {
+	scanUnquoted(s, func(i int, c byte) bool {
+		if c == '|' {
 			lastPipe = i
 		}
-	}
+		return true
+	})
 	return lastPipe
 }
 
-// findLastKeyDot finds the last '.' that starts a key access
-// (not inside brackets, strings, or numeric literals).
-func findLastKeyDot(s string) int {
-	bracketDepth := 0
-	lastDot := -1
-	quoted := false
-	escaped := false
+func scanUnquoted(s string, visit func(int, byte) bool) {
+	quoted, escaped := false, false
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if quoted {
@@ -110,6 +91,18 @@ func findLastKeyDot(s string) int {
 			quoted = true
 			continue
 		}
+		if !visit(i, c) {
+			return
+		}
+	}
+}
+
+// findLastKeyDot finds the last '.' that starts a key access
+// (not inside brackets, strings, or numeric literals).
+func findLastKeyDot(s string) int {
+	bracketDepth := 0
+	lastDot := -1
+	scanUnquoted(s, func(i int, c byte) bool {
 		switch c {
 		case '[':
 			bracketDepth++
@@ -120,15 +113,20 @@ func findLastKeyDot(s string) int {
 				lastDot = i
 			}
 		}
-	}
+		return true
+	})
 	return lastDot
 }
 
 func isNumberDot(s string, i int) bool {
-	if i == 0 || s[i-1] < '0' || s[i-1] > '9' {
+	j := i - 1
+	for j >= 0 && s[j] >= '0' && s[j] <= '9' {
+		j--
+	}
+	if j == i-1 {
 		return false
 	}
-	return i == 1 || !isIdentifierByte(s[i-2])
+	return j < 0 || (!isIdentifierByte(s[j]) && s[j] != '.' && s[j] != ']' && s[j] != ')' && s[j] != '"')
 }
 
 func isIdentifierByte(c byte) bool {
@@ -144,31 +142,19 @@ func isLikelyPath(path string) bool {
 	}
 
 	depth := 0
-	quoted, escaped := false, false
-	for i := 0; i < len(path); i++ {
-		if quoted {
-			if escaped {
-				escaped = false
-			} else if path[i] == '\\' {
-				escaped = true
-			} else if path[i] == '"' {
-				quoted = false
-			}
-			continue
-		}
-		if path[i] == '"' {
-			quoted = true
-			continue
-		}
-		switch path[i] {
+	valid := true
+	scanUnquoted(path, func(_ int, c byte) bool {
+		switch c {
 		case '[':
 			depth++
 		case ']':
 			depth--
 			if depth < 0 {
+				valid = false
 				return false
 			}
 		}
-	}
-	return depth == 0
+		return true
+	})
+	return valid && depth == 0
 }
