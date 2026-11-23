@@ -32,9 +32,6 @@ func Parse(filter string) Context {
 
 	// Find the last dot that starts a key
 	lastDot := findLastKeyDot(workingFilter)
-	if lastDot == 0 && strings.IndexFunc(workingFilter[1:], unicode.IsSpace) >= 0 {
-		return Context{Path: ".", Incomplete: workingFilter[1:], StartPos: offset + 1}
-	}
 	if lastDot < 0 {
 		// No dot found, treat as incomplete from start
 		if workingFilter == "" || workingFilter == "." {
