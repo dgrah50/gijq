@@ -45,6 +45,9 @@ func Parse(filter string) Context {
 
 	path := workingFilter[:lastDot]
 	incomplete := workingFilter[lastDot+1:]
+	if strings.HasPrefix(incomplete, `"`) {
+		incomplete = strings.TrimSuffix(strings.TrimPrefix(incomplete, `"`), `"`)
+	}
 
 	if path == "" {
 		path = "."
@@ -91,20 +94,37 @@ func findLastPipe(s string) int {
 // (not inside brackets)
 func findLastKeyDot(s string) int {
 	bracketDepth := 0
-
-	for i := len(s) - 1; i >= 0; i-- {
-		switch s[i] {
+	quote := byte(0)
+	escaped := false
+	lastDot := -1
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			quote = c
 		case ']':
-			bracketDepth++
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
 		case '[':
-			bracketDepth--
+			bracketDepth++
 		case '.':
 			if bracketDepth == 0 {
-				return i
+				lastDot = i
 			}
 		}
 	}
-	return -1
+	return lastDot
 }
 
 func isLikelyPath(path string) bool {
@@ -116,8 +136,23 @@ func isLikelyPath(path string) bool {
 	}
 
 	depth := 0
+	quote := byte(0)
+	escaped := false
 	for i := 0; i < len(path); i++ {
-		switch path[i] {
+		c := path[i]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			quote = c
 		case '[':
 			depth++
 		case ']':
@@ -127,5 +162,5 @@ func isLikelyPath(path string) bool {
 			}
 		}
 	}
-	return depth == 0
+	return depth == 0 && quote == 0
 }

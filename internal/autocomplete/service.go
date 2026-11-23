@@ -91,10 +91,25 @@ func (s *Service) resolveKeysAfterPipe(ctx context.Context, leftSide string, rig
 // Apply inserts the selected suggestion into the filter
 func (s *Service) Apply(filter string, ctx Context, selected string) string {
 	prefix := filter[:ctx.StartPos]
-	if ctx.StartPos > 0 && filter[ctx.StartPos-1] == '.' && selected != "" && selected[0] != '[' && !isJQIdentifier(selected) {
-		return prefix + quoteJQKey(selected)
+	if !isJQIdentifier(selected) && !isArrayHint(selected) {
+		if strings.HasSuffix(prefix, ".") {
+			return prefix + quoteJQKey(selected)
+		}
+		return prefix + "." + quoteJQKey(selected)
 	}
 	return prefix + selected
+}
+
+func isArrayHint(s string) bool {
+	if len(s) < 3 || s[0] != '[' || s[len(s)-1] != ']' {
+		return false
+	}
+	for i := 1; i < len(s)-1; i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func quoteJQKey(key string) string {
