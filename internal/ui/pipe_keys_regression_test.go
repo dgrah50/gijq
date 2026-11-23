@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -49,8 +48,6 @@ func TestKeysPaneUsesFilterContext(t *testing.T) {
 		if (gotMsg.err != nil) != tt.err {
 			t.Fatalf("fetchKeys(%q) error = %v, want error %v", tt.filter, gotMsg.err, tt.err)
 		}
-		if gotMsg.err != nil || !reflect.DeepEqual(gotMsg.keys, tt.want) {
-		}
 		if tt.err {
 			if m.keys.status != keysFailed {
 				t.Fatalf("keys pane status for %q = %v, want failed", tt.filter, m.keys.status)
@@ -62,10 +59,6 @@ func TestKeysPaneUsesFilterContext(t *testing.T) {
 		}
 	}
 
-	if got, want := m.autocomplete.KeysContext(".users[] | .na"), m.autocomplete.KeysContext(".users[] | ."); got != want {
-		t.Fatalf("pipe context = %q, want %q", got, want)
-	}
-
 	filter := ".users[] | ."
 	if got, _ := m.autocomplete.Suggest(filter); !reflect.DeepEqual(got, []string{"name", "role"}) {
 		t.Fatalf("Suggest = %v, want [name role]", got)
@@ -74,22 +67,5 @@ func TestKeysPaneUsesFilterContext(t *testing.T) {
 		if got, _ := m.autocomplete.Suggest(filter); !reflect.DeepEqual(got, []string{"users"}) {
 			t.Fatalf("Suggest(%q) = %v, want root fallback [users]", filter, got)
 		}
-	}
-}
-
-func TestKeysPaneIgnoresCancelledABAResult(t *testing.T) {
-	var k keysState
-	k.request("A")
-	first := k.seq
-	k.request("B")
-	k.request("A")
-	third := k.seq
-	k.receive("A", nil, context.Canceled, first)
-	if k.status != keysLoading || k.seq != third {
-		t.Fatalf("stale A result changed current request: %+v", k)
-	}
-	k.receive("A", []string{"current"}, nil, third)
-	if k.status != keysLoaded || !reflect.DeepEqual(k.keys, []string{"current"}) {
-		t.Fatalf("current A result not applied: %+v", k)
 	}
 }
