@@ -115,7 +115,9 @@ func findLastKeyDot(s string) int {
 		case '[':
 			bracketDepth++
 		case ']':
-			bracketDepth--
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
 		case '.':
 			if bracketDepth == 0 && !(i > 0 && i+1 < len(s) && s[i-1] >= '0' && s[i-1] <= '9' && s[i+1] >= '0' && s[i+1] <= '9') {
 				lastDot = i
