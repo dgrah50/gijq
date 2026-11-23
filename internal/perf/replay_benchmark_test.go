@@ -1,12 +1,14 @@
 package perf
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/dayangraham/gijq/internal/autocomplete"
 	"github.com/dayangraham/gijq/internal/jq"
+	"github.com/dayangraham/gijq/internal/jsontest"
 )
 
 func BenchmarkExecuteFilters(b *testing.B) {
@@ -26,9 +28,9 @@ func BenchmarkExecuteFilters(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				result := jqSvc.Execute(filters[i%len(filters)])
-				if result.Error != nil {
-					b.Fatalf("filter failed: %v", result.Error)
+				_, err := jsontest.RunAndFormat(context.Background(), jqSvc, filters[i%len(filters)])
+				if err != nil {
+					b.Fatalf("filter failed: %v", err)
 				}
 			}
 		})
@@ -54,7 +56,7 @@ func BenchmarkTypingReplay(b *testing.B) {
 						_, _ = jqSvc.KeysAt(ctx.Path)
 						lastPath = ctx.Path
 					}
-					_ = jqSvc.Execute(step)
+					_, _ = jsontest.RunAndFormat(context.Background(), jqSvc, step)
 				}
 			}
 		})

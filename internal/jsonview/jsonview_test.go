@@ -16,30 +16,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/dayangraham/gijq/internal/jsontest"
 	"github.com/itchyny/gojq"
 	"github.com/mattn/go-runewidth"
 )
-
-// referenceFormat is a copy of internal/jq.formatResults (minus ctx).
-func referenceFormat(results []any) string {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "  ")
-	enc.SetEscapeHTML(false)
-	for i, r := range results {
-		if i > 0 {
-			buf.WriteByte('\n')
-		}
-		start := buf.Len()
-		if err := enc.Encode(r); err != nil {
-			buf.Truncate(start)
-			fmt.Fprintf(&buf, "%v", r)
-			continue
-		}
-		buf.Truncate(buf.Len() - 1)
-	}
-	return buf.String()
-}
 
 // ref is the reference formatter applied to a tree normalised the way the
 // new printer (and gojq) treat non-finite floats: NaN -> null, +-Inf ->
@@ -55,7 +35,7 @@ func ref(results []any) string {
 	for i, r := range results {
 		out[i] = normalize(r)
 	}
-	return strings.ReplaceAll(referenceFormat(out), invalidMark, `\ufffd`)
+	return strings.ReplaceAll(jsontest.ReferenceFormat(out), invalidMark, `\ufffd`)
 }
 
 // markInvalid replaces each invalid UTF-8 byte with invalidMark, exactly as
