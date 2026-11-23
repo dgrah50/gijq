@@ -90,21 +90,39 @@ func findLastPipe(s string) int {
 // findLastKeyDot finds the last '.' that starts a key access
 // (not inside brackets)
 func findLastKeyDot(s string) int {
+	quote := byte(0)
+	escaped := false
 	bracketDepth := 0
+	lastDot := -1
 
-	for i := len(s) - 1; i >= 0; i-- {
-		switch s[i] {
-		case ']':
-			bracketDepth++
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '"' || c == '\'' {
+			quote = c
+			continue
+		}
+		switch c {
 		case '[':
+			bracketDepth++
+		case ']':
 			bracketDepth--
 		case '.':
-			if bracketDepth == 0 {
-				return i
+			if bracketDepth == 0 && !(i > 0 && i+1 < len(s) && s[i-1] >= '0' && s[i-1] <= '9' && s[i+1] >= '0' && s[i+1] <= '9') {
+				lastDot = i
 			}
 		}
 	}
-	return -1
+	return lastDot
 }
 
 func isLikelyPath(path string) bool {
