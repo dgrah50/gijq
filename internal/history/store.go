@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -49,6 +50,11 @@ func NewStore(path string) (*Store, error) {
 // Add records query as the most recent entry for file, removing any earlier
 // duplicate and keeping at most maxPerFile entries.
 func (s *Store) Add(file, query string) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
