@@ -21,51 +21,44 @@ func TestKeysPaneUsesFilterContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewModel(jqSvc, autocomplete.NewService(jqSvc), hist, clipboard.NewService(), Config{})
-	m.keys = keysState{}
+	// Supersede a pipe request with a root request, then deliver the pipe
+	// result late. The pane must stay attached to the newer path.
+	m.setFilter(".users[] | .")
+	staleCmd := m.fetchKeysIfNeeded()
+	m.setFilter(".")
+	rootCmd := m.fetchKeysIfNeeded()
+	staleUpdate, _ := m.Update(staleCmd().(keysMsg))
+	m = staleUpdate.(Model)
+	if m.keys.status != keysLoading || m.keys.path != m.currentPath() {
+		t.Fatalf("stale pipe result changed pending root request: %+v", m.keys)
+	}
+	rootUpdate, _ := m.Update(rootCmd().(keysMsg))
+	m = rootUpdate.(Model)
 	for _, tt := range []struct {
 		filter string
 		want   []string
 		shown  []string
-		err    bool
 	}{
-		{"", []string{"users"}, []string{"users"}, false},
-		{".", []string{"users"}, []string{"users"}, false},
-		{".u", []string{"users"}, []string{"users"}, false},
-		{".users[] | .", []string{"name", "role"}, []string{"name", "role"}, false},
-		{".users[] | .na", []string{"name", "role"}, []string{"name"}, false},
-		{".users[0].name | .", nil, nil, false},
-		{".[broken | .", nil, nil, true},
+		{".users[] | .", []string{"name", "role"}, []string{"name", "role"}},
+		{".users[] | .na", []string{"name", "role"}, []string{"name"}},
+		{".users[0].name | .", []string{"users"}, []string{"users"}},
+		{"| .", []string{"users"}, []string{"users"}},
+		{".[broken | .", []string{"users"}, []string{"users"}},
+		{".", []string{"users"}, []string{"users"}},
+		{".u", []string{"users"}, []string{"users"}},
 	} {
-		m.keys = keysState{}
 		m.setFilter(tt.filter)
 		cmd := m.fetchKeysIfNeeded()
-		if cmd == nil {
-			t.Fatalf("fetchKeysIfNeeded(%q) returned nil", tt.filter)
-		}
-		gotMsg := cmd().(keysMsg)
-		updated, _ := m.Update(gotMsg)
-		m = updated.(Model)
-		if (gotMsg.err != nil) != tt.err {
-			t.Fatalf("fetchKeys(%q) error = %v, want error %v", tt.filter, gotMsg.err, tt.err)
-		}
-		if tt.err {
-			if m.keys.status != keysFailed {
-				t.Fatalf("keys pane status for %q = %v, want failed", tt.filter, m.keys.status)
-			}
-			continue
+		if cmd != nil {
+			gotMsg := cmd().(keysMsg)
+			updated, _ := m.Update(gotMsg)
+			m = updated.(Model)
 		}
 		if m.keys.status != keysLoaded || !reflect.DeepEqual(m.keys.keys, tt.want) || !reflect.DeepEqual(m.keys.filtered(m.acContext().Incomplete), tt.shown) {
 			t.Fatalf("keys pane for %q = status %v, keys %v, shown %v; want loaded, %v, %v", tt.filter, m.keys.status, m.keys.keys, m.keys.filtered(m.acContext().Incomplete), tt.want, tt.shown)
 		}
-	}
-
-	filter := ".users[] | ."
-	if got, _ := m.autocomplete.Suggest(filter); !reflect.DeepEqual(got, []string{"name", "role"}) {
-		t.Fatalf("Suggest = %v, want [name role]", got)
-	}
-	for _, filter := range []string{"| .", ".users[0].name | ."} {
-		if got, _ := m.autocomplete.Suggest(filter); !reflect.DeepEqual(got, []string{"users"}) {
-			t.Fatalf("Suggest(%q) = %v, want root fallback [users]", filter, got)
+		if got, _ := m.autocomplete.Suggest(tt.filter); !reflect.DeepEqual(got, tt.shown) {
+			t.Fatalf("Suggest(%q) = %v, want pane keys %v", tt.filter, got, tt.shown)
 		}
 	}
 }

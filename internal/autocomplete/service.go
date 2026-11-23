@@ -30,7 +30,7 @@ func (s *Service) Suggest(filter string) ([]string, Context) {
 // SuggestWithContext is Suggest with cancellation support.
 func (s *Service) SuggestWithContext(ctx context.Context, filter string) ([]string, Context) {
 	pc := s.ParseContext(filter)
-	keys, err := s.suggestionKeys(ctx, filter, pc)
+	keys, err := s.KeysFor(ctx, filter)
 	if err != nil || keys == nil {
 		return []string{}, pc
 	}
@@ -65,31 +65,20 @@ func (s *Service) KeysContext(filter string) string {
 
 // KeysFor returns the unfiltered keys available at the current filter context.
 func (s *Service) KeysFor(ctx context.Context, filter string) ([]string, error) {
-	return s.keysForContext(ctx, filter, s.ParseContext(filter))
-}
-
-func (s *Service) suggestionKeys(ctx context.Context, filter string, pc Context) ([]string, error) {
+	pc := s.ParseContext(filter)
 	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
 		leftSide := strings.TrimSpace(filter[:pipeIdx])
 		if leftSide == "" {
 			return s.jq.KeysAtWithContext(ctx, pc.Path)
 		}
 		keys, err := s.resolveKeysAfterPipe(ctx, leftSide, pc.Path)
-		if err != nil || keys != nil {
+		if err == nil && keys != nil {
 			return keys, err
 		}
+		// Preserve the established suggestion fallback when a pipe result has
+		// no keys or cannot be evaluated. Both autocomplete and the keys pane
+		// use this same policy.
 		return s.jq.KeysAtWithContext(ctx, pc.Path)
-	}
-	return s.keysForContext(ctx, filter, pc)
-}
-
-func (s *Service) keysForContext(ctx context.Context, filter string, pc Context) ([]string, error) {
-	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
-		leftSide := strings.TrimSpace(filter[:pipeIdx])
-		if leftSide == "" {
-			return nil, nil
-		}
-		return s.resolveKeysAfterPipe(ctx, leftSide, pc.Path)
 	}
 	return s.jq.KeysAtWithContext(ctx, pc.Path)
 }
