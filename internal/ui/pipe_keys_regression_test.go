@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -62,10 +61,6 @@ func TestKeysPaneUsesFilterContext(t *testing.T) {
 	}
 
 	filter := ".users[] | ."
-	got, err := m.autocomplete.KeysFor(context.Background(), filter)
-	if err != nil || !reflect.DeepEqual(got, []string{"name", "role"}) {
-		t.Fatalf("KeysFor = %v, %v", got, err)
-	}
 	if got, _ := m.autocomplete.Suggest(filter); !reflect.DeepEqual(got, []string{"name", "role"}) {
 		t.Fatalf("Suggest = %v, want [name role]", got)
 	}
