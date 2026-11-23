@@ -276,12 +276,9 @@ func (m Model) acContext() autocomplete.Context {
 	return m.autocomplete.ParseContext(m.filter.Value())
 }
 
-// currentPath is the jq path whose keys the keys pane shows.
+// currentPath is the filter context whose keys the keys pane shows.
 func (m Model) currentPath() string {
-	if p := m.acContext().Path; p != "" {
-		return p
-	}
-	return "."
+	return m.filter.Value()
 }
 
 // setMode switches mode and drops the data of every other mode.
@@ -317,10 +314,9 @@ func (m *Model) fetchKeysIfNeeded() tea.Cmd {
 }
 
 func (m Model) fetchKeys(path string) tea.Cmd {
-	jqSvc := m.jq
+	acSvc := m.autocomplete
 	return func() tea.Msg {
-		keys, err := jqSvc.KeysAt(path)
-		return keysMsg{path: path, keys: keys, err: err}
+		return keysMsg{path: path, keys: acSvc.KeysFor(path)}
 	}
 }
 
