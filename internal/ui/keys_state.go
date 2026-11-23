@@ -1,6 +1,9 @@
 package ui
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 type keysStatus int
 
@@ -18,6 +21,8 @@ type keysState struct {
 	path   string
 	keys   []string
 	lower  []string // lowercased keys, parallel to keys
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // request moves the state to loading path. It returns false when the path is
@@ -26,8 +31,18 @@ func (k *keysState) request(path string) bool {
 	if k.status != keysIdle && k.path == path {
 		return false
 	}
-	*k = keysState{status: keysLoading, path: path}
+	if k.cancel != nil {
+		k.cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	*k = keysState{status: keysLoading, path: path, ctx: ctx, cancel: cancel}
 	return true
+}
+
+func (k *keysState) stop() {
+	if k.cancel != nil {
+		k.cancel()
+	}
 }
 
 // receive applies a fetch result. Stale results (for a path other than the

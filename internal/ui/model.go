@@ -32,7 +32,7 @@ const (
 // Model is the Bubble Tea model.
 //
 // Invariants (maintained by the code in keys.go):
-//   - Autocomplete context and the keys-pane path are always derived from the
+//   - Autocomplete context and the keys-pane context are always derived from the
 //     filter text (see acContext/currentPath); they are never stored.
 //   - Any key that changes the filter text queues a debounced query and a
 //     keys fetch (see handleKey). Individual handlers never do this.
@@ -276,9 +276,9 @@ func (m Model) acContext() autocomplete.Context {
 	return m.autocomplete.ParseContext(m.filter.Value())
 }
 
-// currentPath is the filter context whose keys the keys pane shows.
+// currentPath is the stable context whose keys the keys pane shows.
 func (m Model) currentPath() string {
-	return m.filter.Value()
+	return m.autocomplete.KeysContext(m.filter.Value())
 }
 
 // setMode switches mode and drops the data of every other mode.
@@ -314,9 +314,10 @@ func (m *Model) fetchKeysIfNeeded() tea.Cmd {
 }
 
 func (m Model) fetchKeys(path string) tea.Cmd {
-	acSvc := m.autocomplete
+	acSvc, filter, ctx := m.autocomplete, m.filter.Value(), m.keys.ctx
 	return func() tea.Msg {
-		return keysMsg{path: path, keys: acSvc.KeysFor(path)}
+		keys, err := acSvc.KeysFor(ctx, filter)
+		return keysMsg{path: path, keys: keys, err: err}
 	}
 }
 

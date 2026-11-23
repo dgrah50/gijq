@@ -157,6 +157,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m *Model) quit() tea.Cmd {
 	m.quitting = true
 	m.query.stop() // no query goroutine outlives the program
+	m.keys.stop()
 	return tea.Quit
 }
 

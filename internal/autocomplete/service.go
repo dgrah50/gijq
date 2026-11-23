@@ -51,31 +51,29 @@ func (s *Service) SuggestWithContext(ctx context.Context, filter string) ([]stri
 	return matches, pc
 }
 
-// KeysFor returns the unfiltered keys available at the current filter context.
-func (s *Service) KeysFor(filter string) []string {
-	keys, err := s.keysForContext(context.Background(), filter, s.ParseContext(filter))
-	if err != nil || keys == nil {
-		return []string{}
+// KeysContext returns a stable identifier for the keys available at filter.
+func (s *Service) KeysContext(filter string) string {
+	pc := s.ParseContext(filter)
+	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
+		return strings.TrimSpace(filter[:pipeIdx]) + " | " + pc.Path
 	}
-	return keys
+	return pc.Path
+}
+
+// KeysFor returns the unfiltered keys available at the current filter context.
+func (s *Service) KeysFor(ctx context.Context, filter string) ([]string, error) {
+	return s.keysForContext(ctx, filter, s.ParseContext(filter))
 }
 
 func (s *Service) keysForContext(ctx context.Context, filter string, pc Context) ([]string, error) {
-
-	// If filter contains a pipe, resolve context from the left side's output
-	var keys []string
-	var err error
 	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
 		leftSide := strings.TrimSpace(filter[:pipeIdx])
-		if leftSide != "" {
-			keys, err = s.resolveKeysAfterPipe(ctx, leftSide, pc.Path)
+		if leftSide == "" {
+			return nil, nil
 		}
+		return s.resolveKeysAfterPipe(ctx, leftSide, pc.Path)
 	}
-
-	if keys == nil {
-		keys, err = s.jq.KeysAtWithContext(ctx, pc.Path)
-	}
-	return keys, err
+	return s.jq.KeysAtWithContext(ctx, pc.Path)
 }
 
 // resolveKeysAfterPipe determines available keys from the output of the left side of a pipe
