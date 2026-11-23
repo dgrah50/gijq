@@ -30,7 +30,7 @@ func (s *Service) Suggest(filter string) ([]string, Context) {
 // SuggestWithContext is Suggest with cancellation support.
 func (s *Service) SuggestWithContext(ctx context.Context, filter string) ([]string, Context) {
 	pc := s.ParseContext(filter)
-	keys, err := s.keysForContext(ctx, filter, pc)
+	keys, err := s.suggestionKeys(ctx, filter, pc)
 	if err != nil || keys == nil {
 		return []string{}, pc
 	}
@@ -54,6 +54,9 @@ func (s *Service) SuggestWithContext(ctx context.Context, filter string) ([]stri
 // KeysContext returns a stable identifier for the keys available at filter.
 func (s *Service) KeysContext(filter string) string {
 	pc := s.ParseContext(filter)
+	if pc.Path == "" {
+		pc.Path = "."
+	}
 	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
 		return strings.TrimSpace(filter[:pipeIdx]) + " | " + pc.Path
 	}
@@ -63,6 +66,21 @@ func (s *Service) KeysContext(filter string) string {
 // KeysFor returns the unfiltered keys available at the current filter context.
 func (s *Service) KeysFor(ctx context.Context, filter string) ([]string, error) {
 	return s.keysForContext(ctx, filter, s.ParseContext(filter))
+}
+
+func (s *Service) suggestionKeys(ctx context.Context, filter string, pc Context) ([]string, error) {
+	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
+		leftSide := strings.TrimSpace(filter[:pipeIdx])
+		if leftSide == "" {
+			return s.jq.KeysAtWithContext(ctx, pc.Path)
+		}
+		keys, err := s.resolveKeysAfterPipe(ctx, leftSide, pc.Path)
+		if err != nil || keys != nil {
+			return keys, err
+		}
+		return s.jq.KeysAtWithContext(ctx, pc.Path)
+	}
+	return s.keysForContext(ctx, filter, pc)
 }
 
 func (s *Service) keysForContext(ctx context.Context, filter string, pc Context) ([]string, error) {

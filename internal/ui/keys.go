@@ -51,7 +51,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleIndex(msg)
 
 	case keysMsg:
-		m.keys.receive(msg.path, msg.keys, msg.err)
+		m.keys.receive(msg.path, msg.keys, msg.err, msg.seq)
 		return m, nil
 
 	case statusClearMsg:

@@ -225,7 +225,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		textinput.Blink,
 		func() tea.Msg { return executeQueryMsg{seq: m.query.latest} },
-		m.fetchKeys(m.currentPath()),
+		m.fetchKeys(m.currentPath(), m.keys.seq, m.keys.ctx),
 	)
 }
 
@@ -265,6 +265,7 @@ type executeQueryMsg struct {
 
 type keysMsg struct {
 	path string
+	seq  uint64
 	keys []string
 	err  error
 }
@@ -310,14 +311,14 @@ func (m *Model) fetchKeysIfNeeded() tea.Cmd {
 	if !m.keys.request(path) {
 		return nil
 	}
-	return m.fetchKeys(path)
+	return m.fetchKeys(path, m.keys.seq, m.keys.ctx)
 }
 
-func (m Model) fetchKeys(path string) tea.Cmd {
-	acSvc, filter, ctx := m.autocomplete, m.filter.Value(), m.keys.ctx
+func (m Model) fetchKeys(path string, seq uint64, ctx context.Context) tea.Cmd {
+	acSvc, filter := m.autocomplete, m.filter.Value()
 	return func() tea.Msg {
 		keys, err := acSvc.KeysFor(ctx, filter)
-		return keysMsg{path: path, keys: keys, err: err}
+		return keysMsg{path: path, seq: seq, keys: keys, err: err}
 	}
 }
 
