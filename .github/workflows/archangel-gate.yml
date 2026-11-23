@@ -13,7 +13,7 @@ permissions:
 env:
   ARCHANGEL_REPO: dgrah50/archangel
   # Pin to an immutable 40-char commit SHA of dgrah50/archangel.
-  ARCHANGEL_GATE_SHA: be4ef1c8320ad5b30cb6154559065d55d40b42b9
+  ARCHANGEL_GATE_SHA: 94da0a3b7b084c14705c8ed4223a814b614c3146
 
 jobs:
   gate:
@@ -62,6 +62,21 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Resolve the base this merge was built on
+        id: base
+        if: steps.classify.outputs.is_factory == 'true'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The checkout is GitHub's merge of the PR head (second parent) into the base branch tip (first parent). That tip is the
+          # only base whose diff to HEAD is exactly this PR. `pull_request.base.sha` is the base branch when the PR was opened: once
+          # the base branch moves, a diff from it blames this PR for everything merged since.
+          if [ "$(git rev-parse HEAD^2)" != "$HEAD_SHA" ]; then
+            echo "ERROR: the checked-out merge is not of head $HEAD_SHA (the branch moved; the run for the new head covers it)" >&2
+            exit 1
+          fi
+          echo "BASE_SHA=$(git rev-parse HEAD^1)" >> "$GITHUB_ENV"
+
       - name: Setup Node.js (for language-agnostic Archangel Gate CLI)
         if: steps.classify.outputs.is_factory == 'true'
         uses: actions/setup-node@v7
@@ -83,8 +98,6 @@ jobs:
 
       - name: Setup Node dependencies (when target repository has bun.lock or package-lock.json)
         if: steps.classify.outputs.is_factory == 'true' && (hashFiles('bun.lock') != '' || hashFiles('package-lock.json') != '')
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           # Never execute untrusted PR package.json lifecycle scripts; fail closed if package manifests changed.
           if [ -f bun.lock ]; then
@@ -126,11 +139,9 @@ jobs:
       - name: Run Archangel Mechanical Gate (repo-owned .pre-commit-config.yaml + .agents/archangel.json from base)
         if: steps.classify.outputs.is_factory == 'true'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          git cat-file -e "${BASE_SHA}^{commit}"
           EXTRA_ARGS=()
           # Work class comes only from the branch name. The daemon alone chooses factory/feature-<n> or
           # factory/chore-<n> (from an owner-verified `class:feature` / `class:chore` issue label); the implementer
