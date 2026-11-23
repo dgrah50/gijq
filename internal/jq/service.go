@@ -284,11 +284,25 @@ func keysAtSimplePath(data any, path string) ([]string, bool) {
 			}
 			current = arr[token.index]
 		case pathTokenIter:
-			arr, isArr := current.([]any)
-			if !isArr || len(arr) == 0 {
+			switch val := current.(type) {
+			case []any:
+				if len(val) == 0 {
+					return nil, true
+				}
+				current = val[0]
+			case map[string]any:
+				if len(val) == 0 {
+					return nil, true
+				}
+				keys := make([]string, 0, len(val))
+				for key := range val {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				current = val[keys[0]]
+			default:
 				return nil, true
 			}
-			current = arr[0]
 		}
 	}
 
