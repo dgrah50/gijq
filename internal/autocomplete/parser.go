@@ -45,6 +45,10 @@ func Parse(filter string) Context {
 
 	path := workingFilter[:lastDot]
 	incomplete := workingFilter[lastDot+1:]
+	start := offset + lastDot + 1
+	if strings.HasPrefix(incomplete, `"`) {
+		incomplete = strings.TrimPrefix(incomplete, `"`)
+	}
 
 	if path == "" {
 		path = "."
@@ -57,7 +61,7 @@ func Parse(filter string) Context {
 	return Context{
 		Path:       path,
 		Incomplete: incomplete,
-		StartPos:   offset + lastDot + 1,
+		StartPos:   start,
 	}
 }
 
@@ -108,6 +112,9 @@ func findLastKeyDot(s string) int {
 			continue
 		}
 		if c == '"' || c == '\'' {
+			if c == '"' && i > 0 && s[i-1] == '.' && bracketDepth == 0 {
+				lastDot = i - 1
+			}
 			quote = c
 			continue
 		}

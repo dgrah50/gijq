@@ -2,10 +2,15 @@ package autocomplete
 
 import (
 	"context"
+	"encoding/json"
+	"regexp"
 	"strings"
 
 	"github.com/dayangraham/gijq/internal/jq"
 )
+
+var identifierKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var arrayIndexHint = regexp.MustCompile(`^\[[0-9]*\]$`)
 
 // Service provides autocomplete suggestions
 type Service struct {
@@ -89,5 +94,14 @@ func (s *Service) resolveKeysAfterPipe(ctx context.Context, leftSide string, rig
 
 // Apply inserts the selected suggestion into the filter
 func (s *Service) Apply(filter string, ctx Context, selected string) string {
+	if arrayIndexHint.MatchString(selected) {
+		return filter[:ctx.StartPos] + selected
+	}
+	prefix := strings.TrimRight(filter[:ctx.StartPos], " \t\r\n")
+	isKeyAccess := strings.HasSuffix(prefix, ".") || strings.HasSuffix(prefix, `."`)
+	if isKeyAccess && !identifierKey.MatchString(selected) {
+		quoted, _ := json.Marshal(selected)
+		selected = string(quoted)
+	}
 	return filter[:ctx.StartPos] + selected
 }
