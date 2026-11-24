@@ -34,20 +34,7 @@ func (s *Service) Suggest(filter string) ([]string, Context) {
 // SuggestWithContext is Suggest with cancellation support.
 func (s *Service) SuggestWithContext(ctx context.Context, filter string) ([]string, Context) {
 	pc := s.ParseContext(filter)
-
-	// If filter contains a pipe, resolve context from the left side's output
-	var keys []string
-	var err error
-	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
-		leftSide := strings.TrimSpace(filter[:pipeIdx])
-		if leftSide != "" {
-			keys, err = s.resolveKeysAfterPipe(ctx, leftSide, pc.Path)
-		}
-	}
-
-	if keys == nil {
-		keys, err = s.jq.KeysAtWithContext(ctx, pc.Path)
-	}
+	keys, err := s.KeysFor(ctx, filter)
 	if err != nil || keys == nil {
 		return []string{}, pc
 	}
@@ -66,6 +53,38 @@ func (s *Service) SuggestWithContext(ctx context.Context, filter string) ([]stri
 		}
 	}
 	return matches, pc
+}
+
+// KeysContext returns a stable identifier for the keys available at filter.
+func (s *Service) KeysContext(filter string) string {
+	pc := s.ParseContext(filter)
+	if pc.Path == "" {
+		pc.Path = "."
+	}
+	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
+		return strings.TrimSpace(filter[:pipeIdx]) + " | " + pc.Path
+	}
+	return pc.Path
+}
+
+// KeysFor returns the unfiltered keys available at the current filter context.
+func (s *Service) KeysFor(ctx context.Context, filter string) ([]string, error) {
+	pc := s.ParseContext(filter)
+	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
+		leftSide := strings.TrimSpace(filter[:pipeIdx])
+		if leftSide == "" {
+			return s.jq.KeysAtWithContext(ctx, pc.Path)
+		}
+		keys, err := s.resolveKeysAfterPipe(ctx, leftSide, pc.Path)
+		if err == nil && keys != nil {
+			return keys, err
+		}
+		// Preserve the established suggestion fallback when a pipe result has
+		// no keys or cannot be evaluated. Both autocomplete and the keys pane
+		// use this same policy.
+		return s.jq.KeysAtWithContext(ctx, pc.Path)
+	}
+	return s.jq.KeysAtWithContext(ctx, pc.Path)
 }
 
 // resolveKeysAfterPipe determines available keys from the output of the left side of a pipe

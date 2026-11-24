@@ -1,6 +1,9 @@
 package ui
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 type keysStatus int
 
@@ -18,6 +21,9 @@ type keysState struct {
 	path   string
 	keys   []string
 	lower  []string // lowercased keys, parallel to keys
+	ctx    context.Context
+	cancel context.CancelFunc
+	seq    uint64
 }
 
 // request moves the state to loading path. It returns false when the path is
@@ -26,15 +32,31 @@ func (k *keysState) request(path string) bool {
 	if k.status != keysIdle && k.path == path {
 		return false
 	}
-	*k = keysState{status: keysLoading, path: path}
+	if k.cancel != nil {
+		k.cancel()
+	}
+	seq := k.seq + 1
+	ctx, cancel := context.WithCancel(context.Background())
+	*k = keysState{status: keysLoading, path: path, ctx: ctx, cancel: cancel, seq: seq}
 	return true
+}
+
+func (k *keysState) stop() {
+	if k.cancel != nil {
+		k.cancel()
+	}
 }
 
 // receive applies a fetch result. Stale results (for a path other than the
 // one most recently requested) are ignored.
-func (k *keysState) receive(path string, keys []string, err error) {
-	if k.status != keysLoading || k.path != path {
+func (k *keysState) receive(path string, keys []string, err error, requestSeq ...uint64) {
+	if k.status != keysLoading || k.path != path || len(requestSeq) > 0 && k.seq != requestSeq[0] {
 		return
+	}
+	if k.cancel != nil {
+		k.cancel()
+		k.cancel = nil
+		k.ctx = nil
 	}
 	if err != nil {
 		k.status = keysFailed
