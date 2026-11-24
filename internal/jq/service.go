@@ -192,6 +192,7 @@ func keysAtSimplePath(data any, path string) ([]string, bool) {
 		return nil, false
 	}
 
+	iterIndex := 0
 	current := data
 	for _, token := range tokens {
 		switch token.kind {
@@ -208,14 +209,21 @@ func keysAtSimplePath(data any, path string) ([]string, bool) {
 			}
 			current = arr[token.index]
 		case pathTokenIter:
+			iterIndex++
 			switch val := current.(type) {
 			case []any:
 				if len(val) == 0 {
+					if iterIndex > 1 {
+						return nil, false
+					}
 					return nil, true
 				}
 				current = val[0]
 			case map[string]any:
 				if len(val) == 0 {
+					if iterIndex > 1 {
+						return nil, false
+					}
 					return nil, true
 				}
 				keys := make([]string, 0, len(val))
