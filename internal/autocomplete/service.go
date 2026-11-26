@@ -35,17 +35,19 @@ func (s *Service) Suggest(filter string) ([]string, Context) {
 func (s *Service) SuggestWithContext(ctx context.Context, filter string) ([]string, Context) {
 	pc := s.ParseContext(filter)
 
-	// If filter contains a pipe, resolve context from the left side's output
 	var keys []string
 	var err error
 	if pipeIdx := findLastPipe(filter); pipeIdx >= 0 {
 		leftSide := strings.TrimSpace(filter[:pipeIdx])
 		if leftSide != "" {
 			keys, err = s.resolveKeysAfterPipe(ctx, leftSide, pc.Path)
+			if err != nil || keys == nil {
+				return []string{}, pc
+			}
+		} else {
+			keys, err = s.jq.KeysAtWithContext(ctx, pc.Path)
 		}
-	}
-
-	if keys == nil {
+	} else {
 		keys, err = s.jq.KeysAtWithContext(ctx, pc.Path)
 	}
 	if err != nil || keys == nil {
