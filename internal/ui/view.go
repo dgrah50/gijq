@@ -265,11 +265,11 @@ func (m Model) renderSuggestions() []string {
 	} else {
 		lines = append(lines, labelStyle.Render("Available keys:"))
 	}
-	for i, k := range keys {
+	visible := max(1, m.contentHeight()-2)
+	for i, k := range keys[:min(len(keys), visible)] {
 		lines = append(lines, suggestionStyle.Render("  "+k))
-		if i >= m.contentHeight()-2 {
-			lines = append(lines, helpStyle.Render(fmt.Sprintf("  ...+%d more", len(keys)-i-1)))
-			break
+		if i == visible-1 && len(keys) > visible {
+			lines = append(lines, helpStyle.Render(fmt.Sprintf("  ...+%d more", len(keys)-visible)))
 		}
 	}
 	return lines
